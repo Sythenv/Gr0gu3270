@@ -1,3 +1,26 @@
-pentest.db
-pentest.csv
-__pycache__
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+
+# Project data (session-specific)
+*.db
+*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Research sessions (local only)
+research/sessions/
+
+# Generated artifacts
+research/presentation.pdf

