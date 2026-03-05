@@ -310,3 +310,170 @@ class TestSpoolClassifyResponse:
         data = ascii_to_ebcdic("DFHAC2008 NOT AUTHORIZED TO USE TRANSACTION")
         status = h3270.classify_response(data)
         assert status == 'DENIED'
+
+
+# ---- PR5: AID Scan ----
+
+class TestScreenSimilarity:
+    def test_identical_screens(self, h3270):
+        """Identical data → similarity 1.0."""
+        data = ascii_to_ebcdic("WELCOME TO CICS MENU")
+        assert h3270.screen_similarity(data, data) == 1.0
+
+    def test_different_screens(self, h3270):
+        """Completely different data → low similarity."""
+        a = ascii_to_ebcdic("WELCOME TO CICS MENU PLEASE SELECT")
+        b = ascii_to_ebcdic("NOT AUTHORIZED ICH408I SECURITY FAIL")
+        sim = h3270.screen_similarity(a, b)
+        assert sim < 0.5
+
+    def test_similar_screens(self, h3270):
+        """Screens with minor changes (timestamp) → high similarity."""
+        a = ascii_to_ebcdic("CICS MENU  16:42:03  SELECT OPTION")
+        b = ascii_to_ebcdic("CICS MENU  16:42:05  SELECT OPTION")
+        sim = h3270.screen_similarity(a, b)
+        assert sim > 0.8
+
+    def test_none_input(self, h3270):
+        """None input → 0.0."""
+        data = ascii_to_ebcdic("HELLO")
+        assert h3270.screen_similarity(None, data) == 0.0
+        assert h3270.screen_similarity(data, None) == 0.0
+
+
+class TestAidScanCategorize:
+    def test_violation(self, h3270):
+        """Response with security violation → VIOLATION."""
+        data = ascii_to_ebcdic("ICH408I NOT AUTHORIZED FOR RESOURCE")
+        cat, status, sim = h3270.aid_scan_categorize(data, data)
+        assert cat == 'VIOLATION'
+        assert status == 'DENIED'
+
+    def test_same_screen(self, h3270):
+        """Response identical to ref → SAME_SCREEN."""
+        ref = ascii_to_ebcdic("CICS MENU SELECT OPTION 1-9")
+        cat, status, sim = h3270.aid_scan_categorize(ref, ref)
+        assert cat == 'SAME_SCREEN'
+        assert sim > 0.8
+
+    def test_new_screen(self, h3270):
+        """Response different from ref → NEW_SCREEN."""
+        ref = ascii_to_ebcdic("CICS MENU SELECT OPTION 1-9 PF KEYS")
+        resp = ascii_to_ebcdic("ORDER MANAGEMENT ENTER ORDER NUMBER")
+        cat, status, sim = h3270.aid_scan_categorize(resp, ref)
+        assert cat == 'NEW_SCREEN'
+        assert sim < 0.8
+
+
+class TestBuildAidPayload:
+    def test_enter_plain(self, h3270):
+        """ENTER AID payload (plain TN3270)."""
+        payload = h3270.build_aid_payload('ENTER', is_tn3270e=False)
+        assert payload[0:1] == b'\x7d'  # ENTER AID
+        assert payload.endswith(b'\xff\xef')
+
+    def test_clear_plain(self, h3270):
+        """CLEAR is a short-read AID (no cursor address)."""
+        payload = h3270.build_aid_payload('CLEAR', is_tn3270e=False)
+        assert payload == b'\x6d\xff\xef'
+
+    def test_pf3_tn3270e(self, h3270):
+        """PF3 in TN3270E has 5-byte header."""
+        payload = h3270.build_aid_payload('PF3', is_tn3270e=True)
+        assert payload[:5] == b'\x00\x00\x00\x00\x01'
+        assert payload[5:6] == b'\xf3'  # PF3 AID
+        assert payload.endswith(b'\xff\xef')
+
+    def test_pa1_short_read(self, h3270):
+        """PA1 is a short-read AID."""
+        payload = h3270.build_aid_payload('PA1', is_tn3270e=False)
+        assert payload == b'\x6c\xff\xef'
+
+
+class TestExtractReplayPath:
+    def test_empty_logs(self, h3270):
+        """No logs → empty path."""
+        path = h3270.extract_replay_path()
+        assert path == []
+
+    def test_path_from_clear(self, h3270):
+        """Logs with CLEAR + follow-up → path includes both."""
+        # Insert some client logs
+        clear_payload = b'\x6d\xff\xef'  # CLEAR
+        txn_payload = b'\x7d\x5b\x60\xc3\xe2\xc7\xd4\xff\xef'  # ENTER+SBA+CSGM
+        h3270.write_database_log('C', 'clear', clear_payload)
+        h3270.write_database_log('S', 'response', ascii_to_ebcdic("OK"))
+        h3270.write_database_log('C', 'txn', txn_payload)
+        path = h3270.extract_replay_path()
+        assert len(path) == 2
+        assert path[0] == clear_payload
+        assert path[1] == txn_payload
+
+    def test_skips_negotiations(self, h3270):
+        """TN3270 negotiation packets (0xFF) are skipped."""
+        h3270.write_database_log('C', 'neg', b'\xff\xfd\x28')
+        h3270.write_database_log('C', 'clear', b'\x6d\xff\xef')
+        path = h3270.extract_replay_path()
+        assert len(path) == 1  # Only CLEAR, no negotiation
+
+
+class TestAidScanState:
+    def test_start_sets_state(self, h3270):
+        """aid_scan_start initializes all state."""
+        # Insert a reference screen in logs
+        h3270.write_database_log('C', 'clear', b'\x6d\xff\xef')
+        h3270.write_database_log('S', 'ref', ascii_to_ebcdic("MENU SCREEN"))
+        h3270.aid_scan_start()
+        assert h3270.aid_scan_running is True
+        assert len(h3270.aid_scan_keys) == 28
+        assert h3270.aid_scan_index == 0
+        assert h3270.aid_scan_ref_screen is not None
+        assert len(h3270.aid_scan_replay_path) >= 1
+
+    def test_stop_clears_state(self, h3270):
+        """aid_scan_stop sets running to False."""
+        h3270.aid_scan_running = True
+        h3270.aid_scan_stop()
+        assert h3270.aid_scan_running is False
+
+    def test_get_aid_scan_running(self, h3270):
+        """get_aid_scan_running returns current state."""
+        assert h3270.get_aid_scan_running() is False
+        h3270.aid_scan_running = True
+        assert h3270.get_aid_scan_running() is True
+
+
+class TestAidScanDB:
+    def test_write_read_aid_scan(self, h3270):
+        """Write + read AID scan result round-trip."""
+        import time
+        result = {
+            'aid_key': 'PF5',
+            'category': 'NEW_SCREEN',
+            'status': 'ACCESSIBLE',
+            'similarity': 0.234,
+            'response_preview': 'ADMIN MENU',
+            'response_len': 500,
+            'timestamp': time.time(),
+        }
+        h3270.write_aid_scan_log(result)
+        rows = h3270.all_aid_scan_results()
+        assert len(rows) == 1
+        assert rows[0][2] == 'PF5'
+        assert rows[0][3] == 'NEW_SCREEN'
+        assert rows[0][4] == 'ACCESSIBLE'
+        assert abs(rows[0][5] - 0.234) < 0.001
+
+    def test_read_since(self, h3270):
+        """all_aid_scan_results(since) filters by ID."""
+        import time
+        for key in ['PF1', 'PF2', 'PF3']:
+            h3270.write_aid_scan_log({
+                'aid_key': key, 'category': 'SAME_SCREEN', 'status': 'ACCESSIBLE',
+                'similarity': 0.9, 'response_preview': '', 'response_len': 100,
+                'timestamp': time.time(),
+            })
+        all_rows = h3270.all_aid_scan_results()
+        assert len(all_rows) == 3
+        since_rows = h3270.all_aid_scan_results(start=1)
+        assert len(since_rows) == 2

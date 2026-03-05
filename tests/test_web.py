@@ -521,3 +521,97 @@ def test_spool_poc_endpoint_no_ip(web_server):
     resp = urllib.request.urlopen(req, timeout=5)
     data = json.loads(resp.read())
     assert data['ok'] is False
+
+
+# ---- PR5: AID Scan ----
+
+class TestAidScanState:
+    def test_start_not_connected(self, state):
+        """AID scan requires connection."""
+        result = state.aid_scan_start()
+        assert result['ok'] is False
+        assert 'Not connected' in result['message']
+
+    def test_stop(self, state):
+        """AID scan stop returns ok."""
+        result = state.aid_scan_stop()
+        assert result['ok'] is True
+
+    def test_summary_empty(self, state):
+        """Empty summary when no scan run."""
+        summary = state.get_aid_scan_summary()
+        assert summary['running'] is False
+        assert summary['total'] == 0
+        assert summary['results'] == []
+
+    def test_results_empty(self, state):
+        """No results when no scan run."""
+        results = state.get_aid_scan_results()
+        assert results == []
+
+    def test_results_with_data(self, state):
+        """Results return stored AID scan data."""
+        import time
+        state.h.write_aid_scan_log({
+            'aid_key': 'PF5', 'category': 'NEW_SCREEN', 'status': 'ACCESSIBLE',
+            'similarity': 0.3, 'response_preview': 'ADMIN', 'response_len': 200,
+            'timestamp': time.time(),
+        })
+        results = state.get_aid_scan_results()
+        assert len(results) == 1
+        assert results[0]['aid_key'] == 'PF5'
+        assert results[0]['category'] == 'NEW_SCREEN'
+
+    def test_summary_sorted(self, state):
+        """Summary sorts results by category priority."""
+        import time
+        for key, cat in [('PF1', 'SAME_SCREEN'), ('PF5', 'NEW_SCREEN'), ('PF3', 'VIOLATION')]:
+            state.h.aid_scan_results.append({
+                'aid_key': key, 'category': cat, 'status': 'ACCESSIBLE',
+                'similarity': 0.5, 'response_preview': '', 'response_len': 0,
+                'timestamp': time.time(),
+            })
+        summary = state.get_aid_scan_summary()
+        assert summary['results'][0]['category'] == 'VIOLATION'
+        assert summary['results'][1]['category'] == 'NEW_SCREEN'
+        assert summary['results'][2]['category'] == 'SAME_SCREEN'
+
+
+def test_http_aid_scan_summary(web_server):
+    """GET /api/aid_scan/summary returns valid JSON."""
+    port = web_server
+    data = get(port, '/api/aid_scan/summary')
+    assert 'running' in data
+    assert 'total' in data
+    assert 'results' in data
+
+
+def test_http_aid_scan_results(web_server):
+    """GET /api/aid_scan/results returns list."""
+    port = web_server
+    data = get(port, '/api/aid_scan/results')
+    assert isinstance(data, list)
+
+
+def test_http_aid_scan_start_no_connection(web_server):
+    """POST /api/aid_scan/start without connection returns error."""
+    port = web_server
+    req = urllib.request.Request(
+        'http://127.0.0.1:{}/api/aid_scan/start'.format(port),
+        data=json.dumps({}).encode(),
+        headers={'Content-Type': 'application/json'})
+    resp = urllib.request.urlopen(req, timeout=5)
+    data = json.loads(resp.read())
+    assert data['ok'] is False
+
+
+def test_http_aid_scan_stop(web_server):
+    """POST /api/aid_scan/stop returns ok."""
+    port = web_server
+    req = urllib.request.Request(
+        'http://127.0.0.1:{}/api/aid_scan/stop'.format(port),
+        data=json.dumps({}).encode(),
+        headers={'Content-Type': 'application/json'})
+    resp = urllib.request.urlopen(req, timeout=5)
+    data = json.loads(resp.read())
+    assert data['ok'] is True

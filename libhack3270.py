@@ -222,6 +222,14 @@ class hack3270:
         self.audit_index = 0
         self.audit_timestamp_sent = 0
 
+        # AID Scan (PR5)
+        self.aid_scan_running = False
+        self.aid_scan_results = []
+        self.aid_scan_keys = []
+        self.aid_scan_index = 0
+        self.aid_scan_replay_path = []
+        self.aid_scan_ref_screen = None
+
         # State Tracking Vars
         self.hack_toggled = False
         self.hack_color_toggled =False
@@ -479,6 +487,27 @@ class hack3270:
                             DURATION_MS REAL,
                             RESPONSE_PREVIEW TEXT,
                             FULL_REPORT TEXT)
+                            """)
+            self.sql_con.commit()
+
+        # AID Scan table (PR5)
+        self.sql_cur.execute("""
+                             SELECT count(name)
+                             FROM sqlite_master
+                             WHERE TYPE='table' AND NAME='AidScan'
+                             """)
+        if self.sql_cur.fetchone()[0] != 1:
+            self.logger.debug("Creating AidScan table...")
+            self.sql_cur.execute("""
+                            CREATE TABLE AidScan (
+                            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                            TIMESTAMP TEXT,
+                            AID_KEY TEXT,
+                            CATEGORY TEXT,
+                            STATUS TEXT,
+                            SIMILARITY REAL,
+                            RESPONSE_PREVIEW TEXT,
+                            RESPONSE_LEN INTEGER)
                             """)
             self.sql_con.commit()
 
@@ -1468,6 +1497,216 @@ class hack3270:
         if is_tn3270e:
             payload = b'\x00\x00\x00\x00\x01' + payload
         return payload
+
+    # ---- AID Scan (PR5) ----
+
+    def extract_replay_path(self):
+        '''Reads client logs from DB, walks back to find the last CLEAR,
+        returns list of raw payloads from CLEAR onwards (the navigation path).'''
+        self.sql_cur.execute(
+            "SELECT ID, RAW_DATA FROM Logs WHERE C_S='C' ORDER BY ID DESC"
+        )
+        rows = self.sql_cur.fetchall()
+
+        path = []
+        for row in rows:
+            raw_data = bytes(row[1])
+            # Skip empty or negotiation packets
+            if len(raw_data) < 3 or raw_data[0] == 0xFF:
+                continue
+            path.insert(0, raw_data)
+            # Check if this packet contains a CLEAR AID
+            aid_offset = 5 if (len(raw_data) > 5 and raw_data[0] == 0x00) else 0
+            if aid_offset < len(raw_data) and raw_data[aid_offset] == 0x6D:
+                break
+
+        return path
+
+    def extract_ref_screen(self):
+        '''Gets the last server response from logs as the reference screen.'''
+        self.sql_cur.execute(
+            "SELECT RAW_DATA FROM Logs WHERE C_S='S' ORDER BY ID DESC LIMIT 1"
+        )
+        row = self.sql_cur.fetchone()
+        if row:
+            return bytes(row[0])
+        return None
+
+    def screen_similarity(self, data_a, data_b):
+        '''Compares two server responses by their ASCII text content.
+        Returns similarity ratio 0.0-1.0.'''
+        if data_a is None or data_b is None:
+            return 0.0
+        text_a = self.get_ascii(data_a)
+        text_b = self.get_ascii(data_b)
+        # Remove control char placeholders for cleaner comparison
+        text_a = re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', text_a).strip()
+        text_b = re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', text_b).strip()
+        if not text_a or not text_b:
+            return 0.0
+        # Simple character-level similarity (no external deps)
+        if text_a == text_b:
+            return 1.0
+        matches = sum(1 for a, b in zip(text_a, text_b) if a == b)
+        max_len = max(len(text_a), len(text_b))
+        return matches / max_len if max_len > 0 else 0.0
+
+    def aid_scan_categorize(self, server_data, ref_screen):
+        '''Categorizes an AID response into SAME_SCREEN, VIOLATION, or NEW_SCREEN.'''
+        status = self.classify_response(server_data)
+        similarity = self.screen_similarity(server_data, ref_screen)
+
+        if status in ('DENIED', 'ABEND'):
+            return ('VIOLATION', status, similarity)
+        if similarity > 0.8:
+            return ('SAME_SCREEN', status, similarity)
+        return ('NEW_SCREEN', status, similarity)
+
+    AID_SCAN_KEYS = [
+        'ENTER', 'PF1', 'PF2', 'PF3', 'PF4', 'PF5', 'PF6',
+        'PF7', 'PF8', 'PF9', 'PF10', 'PF11', 'PF12',
+        'PF13', 'PF14', 'PF15', 'PF16', 'PF17', 'PF18',
+        'PF19', 'PF20', 'PF21', 'PF22', 'PF23', 'PF24',
+        'PA1', 'PA2', 'PA3',
+    ]
+
+    def build_aid_payload(self, aid_name, is_tn3270e):
+        '''Builds a payload to send a bare AID key (no data).'''
+        aid_byte = self.AIDS[aid_name]
+        # Short-read AIDs (CLEAR, PA1-3) have no cursor address
+        short_aids = {b'\x6d', b'\x6c', b'\x6e', b'\x6b'}
+        if aid_byte in short_aids:
+            payload = aid_byte + b'\xff\xef'
+        else:
+            # AID + cursor at 0,0 (SBA not needed for bare key)
+            payload = aid_byte + b'\x40\x40\xff\xef'
+        if is_tn3270e:
+            payload = b'\x00\x00\x00\x00\x01' + payload
+        return payload
+
+    def aid_scan_start(self):
+        '''Starts an AID scan from the current screen.
+        Extracts replay path and reference screen from logs.'''
+        self.aid_scan_replay_path = self.extract_replay_path()
+        self.aid_scan_ref_screen = self.extract_ref_screen()
+        self.aid_scan_keys = list(self.AID_SCAN_KEYS)
+        self.aid_scan_index = 0
+        self.aid_scan_results = []
+        self.aid_scan_running = True
+        self.logger.debug("AID scan started, replay path has {} steps".format(
+            len(self.aid_scan_replay_path)))
+
+    def aid_scan_stop(self):
+        '''Stops the running AID scan.'''
+        self.aid_scan_running = False
+        self.logger.debug("AID scan stopped")
+
+    def get_aid_scan_running(self):
+        return self.aid_scan_running
+
+    def _aid_scan_send_and_read(self, payload, timeout=2):
+        '''Sends a payload and reads server response. Returns raw bytes or None.'''
+        self.server.send(payload)
+        try:
+            rlist, _, _ = select.select([self.server], [], [], timeout)
+            if self.server in rlist:
+                data = self.server.recv(BUFFER_MAX)
+                if len(data) > 0:
+                    return data
+        except Exception:
+            pass
+        return None
+
+    def aid_scan_replay(self):
+        '''Replays the navigation path to return to the target screen.
+        Returns the last server response (should be the target screen).'''
+        is_tn3270e = self.check_inject_3270e()
+        last_response = None
+
+        # Always start with a CLEAR to reset state
+        clear_payload = self.build_clear_payload(is_tn3270e)
+        self._aid_scan_send_and_read(clear_payload, timeout=0.5)
+
+        for step in self.aid_scan_replay_path:
+            # Skip the CLEAR that's already in the path (we just sent one)
+            step_aid_offset = 5 if (len(step) > 5 and step[0] == 0x00) else 0
+            if step_aid_offset < len(step) and step[step_aid_offset] == 0x6D:
+                continue
+            last_response = self._aid_scan_send_and_read(step, timeout=1)
+            time.sleep(0.1)
+
+        return last_response
+
+    def aid_scan_next(self):
+        '''Tests the next AID key. Sends it, captures response, then replays path.
+        Returns result dict or None if done.'''
+        if self.aid_scan_index >= len(self.aid_scan_keys):
+            self.aid_scan_running = False
+            return None
+
+        aid_name = self.aid_scan_keys[self.aid_scan_index]
+        is_tn3270e = self.check_inject_3270e()
+
+        # Send the AID key
+        payload = self.build_aid_payload(aid_name, is_tn3270e)
+        self.write_database_log('C', 'AID scan: {}'.format(aid_name), payload)
+        server_data = self._aid_scan_send_and_read(payload, timeout=2)
+
+        result = {
+            'aid_key': aid_name,
+            'category': 'TIMEOUT',
+            'status': 'TIMEOUT',
+            'similarity': 0.0,
+            'response_preview': '',
+            'response_len': 0,
+            'timestamp': time.time(),
+        }
+
+        if server_data:
+            self.client.send(server_data)
+            category, status, similarity = self.aid_scan_categorize(
+                server_data, self.aid_scan_ref_screen)
+            ascii_text = self.get_ascii(server_data)
+            preview = re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', ascii_text).strip()[:200]
+            result.update({
+                'category': category,
+                'status': status,
+                'similarity': round(similarity, 3),
+                'response_preview': preview,
+                'response_len': len(server_data),
+            })
+            self.write_database_log('S', 'AID scan response: {} -> {}'.format(
+                aid_name, category), server_data)
+
+        self.aid_scan_results.append(result)
+        self.write_aid_scan_log(result)
+        self.aid_scan_index += 1
+
+        # Replay path to return to target screen
+        replay_response = self.aid_scan_replay()
+        if replay_response:
+            self.client.send(replay_response)
+
+        self.logger.debug("AID scan: {} -> {}".format(aid_name, result['category']))
+        return result
+
+    def write_aid_scan_log(self, result):
+        '''Writes an AID scan result to the database.'''
+        self.sql_cur.execute(
+            "INSERT INTO AidScan ('TIMESTAMP', 'AID_KEY', 'CATEGORY', 'STATUS', 'SIMILARITY', 'RESPONSE_PREVIEW', 'RESPONSE_LEN') VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (str(result['timestamp']), result['aid_key'], result['category'],
+             result['status'], result['similarity'], result['response_preview'],
+             result['response_len'])
+        )
+        self.sql_con.commit()
+
+    def all_aid_scan_results(self, start=0):
+        '''Gets AID scan results from database.'''
+        if start > 0:
+            self.sql_cur.execute("SELECT * FROM AidScan WHERE ID > ?", (start,))
+        else:
+            self.sql_cur.execute("SELECT * FROM AidScan")
+        return self.sql_cur.fetchall()
 
     # ---- SPOOL/RCE Detection ----
 

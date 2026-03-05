@@ -129,6 +129,8 @@ class Hack3270State:
         self.scan_running = False
         self.scan_result = None
         self.scan_thread = None
+        self.aid_scan_thread = None
+        self.last_aid_scan_id = 0
         # Command queue: HTTP threads queue (label, payload) tuples,
         # daemon thread sends them to the server socket.
         self._cmd_queue = queue.Queue()
@@ -144,6 +146,7 @@ class Hack3270State:
                 'abend_detection': bool(self.h.abend_detection),
                 'transaction_tracking': bool(self.h.transaction_tracking),
                 'audit_running': bool(self.h.audit_running),
+                'aid_scan_running': bool(self.h.aid_scan_running),
                 'disabled_tabs': self.disabled_tabs,
                 'version': libhack3270.__version__,
                 'project_name': self.h.project_name,
@@ -669,6 +672,90 @@ class Hack3270State:
             csv_file = self.h.export_scan_csv()
             return {'ok': True, 'filename': csv_file}
 
+    # ---- AID Scan (PR5) ----
+
+    def aid_scan_start(self):
+        if not self.connection_ready.is_set():
+            return {'ok': False, 'message': 'Not connected.'}
+        if self.h.audit_running:
+            return {'ok': False, 'message': 'Audit is running.'}
+        if self.scan_running:
+            return {'ok': False, 'message': 'Scan is running.'}
+        if self.h.aid_scan_running:
+            return {'ok': False, 'message': 'AID scan already running.'}
+
+        with self.lock:
+            self.h.aid_scan_start()
+
+        self.aid_scan_thread = threading.Thread(
+            target=self._aid_scan_worker, daemon=True)
+        self.aid_scan_thread.start()
+        return {'ok': True, 'message': 'AID scan started ({} keys)...'.format(
+            len(self.h.aid_scan_keys))}
+
+    def _aid_scan_worker(self):
+        try:
+            while True:
+                if self.shutdown_flag.is_set():
+                    break
+
+                with self.lock:
+                    if not self.h.get_aid_scan_running():
+                        break
+                    result = self.h.aid_scan_next()
+                    if result is None:
+                        break
+
+                # Pause between tests to let mainframe settle
+                time.sleep(0.3)
+
+        except Exception as e:
+            logging.getLogger(__name__).error("AID scan error: {}".format(e))
+        finally:
+            with self.lock:
+                self.h.aid_scan_stop()
+
+    def aid_scan_stop(self):
+        with self.lock:
+            self.h.aid_scan_stop()
+            return {'ok': True, 'message': 'AID scan stopped.'}
+
+    def get_aid_scan_results(self, since=0):
+        with self.lock:
+            rows = self.h.all_aid_scan_results(since)
+            results = []
+            for row in rows:
+                results.append({
+                    'id': row[0],
+                    'timestamp': row[1],
+                    'aid_key': row[2],
+                    'category': row[3],
+                    'status': row[4],
+                    'similarity': row[5],
+                    'response_preview': row[6],
+                    'response_len': row[7],
+                })
+            return results
+
+    def get_aid_scan_summary(self):
+        with self.lock:
+            results = self.h.aid_scan_results
+            summary = {'VIOLATION': [], 'NEW_SCREEN': [], 'SAME_SCREEN': [], 'TIMEOUT': []}
+            for r in results:
+                cat = r.get('category', 'TIMEOUT')
+                if cat in summary:
+                    summary[cat].append(r)
+                else:
+                    summary[cat] = [r]
+            return {
+                'running': self.h.aid_scan_running,
+                'progress': self.h.aid_scan_index,
+                'total': len(self.h.aid_scan_keys),
+                'summary': {k: len(v) for k, v in summary.items()},
+                'results': sorted(results,
+                    key=lambda r: {'VIOLATION': 0, 'NEW_SCREEN': 1, 'TIMEOUT': 2, 'SAME_SCREEN': 3}.get(r.get('category', ''), 4))
+            }
+
     def run_daemon(self):
         """Called from daemon thread to process proxy traffic.
 
@@ -707,6 +794,8 @@ class Hack3270State:
             if self.h.audit_running:
                 return
             if self.scan_running:
+                return
+            if self.h.aid_scan_running:
                 return
             try:
                 self.h.daemon()
@@ -801,6 +890,11 @@ class Hack3270Handler(BaseHTTPRequestHandler):
         elif path == '/api/scan/results':
             since = int(params.get('since', ['0'])[0])
             self._send_json(self.state.get_scan_results(since))
+        elif path == '/api/aid_scan/results':
+            since = int(params.get('since', ['0'])[0])
+            self._send_json(self.state.get_aid_scan_results(since))
+        elif path == '/api/aid_scan/summary':
+            self._send_json(self.state.get_aid_scan_summary())
         else:
             self._send_json({'error': 'not found'}, 404)
 
@@ -855,6 +949,12 @@ class Hack3270Handler(BaseHTTPRequestHandler):
             self._send_json(result)
         elif path == '/api/scan/export':
             result = self.state.export_scan_csv()
+            self._send_json(result)
+        elif path == '/api/aid_scan/start':
+            result = self.state.aid_scan_start()
+            self._send_json(result)
+        elif path == '/api/aid_scan/stop':
+            result = self.state.aid_scan_stop()
             self._send_json(result)
         elif path == '/api/spool/check':
             result = self.state.spool_check()
@@ -1184,6 +1284,7 @@ const ACTIONS = [
   {id:'inject-keys', label:'Keys', group:1},
   {id:'scan', label:'Scan', group:2},
   {id:'audit', label:'Bulk Audit', group:2},
+  {id:'aid-scan', label:'AID Scan', group:2},
   {id:'spool', label:'SPOOL/RCE', group:2},
   {id:'logs', label:'Logs', group:3, tall:true},
   {id:'statistics', label:'Stats', group:3},
@@ -1435,6 +1536,24 @@ function buildActionPanels() {
     <table style="margin-top:6px"><thead><tr>
       <th>ID</th><th>Time</th><th>Txn</th><th>Status</th><th>Preview</th>
     </tr></thead><tbody id="audit-table"></tbody></table>`;
+
+  // AID Scan
+  document.getElementById('apanel-aid-scan').innerHTML = `
+    <div class="controls">
+      <button class="btn" id="aid-scan-btn" onclick="aidScanStart()">AID SCAN</button>
+      <button class="btn danger" id="aid-scan-stop-btn" onclick="aidScanStop()" style="display:none">STOP</button>
+      <span id="aid-scan-progress" style="font-size:11px;color:#94a3b8;margin-left:8px"></span>
+    </div>
+    <p style="font-size:10px;color:#64748b;margin:4px 0 8px 0">Navigate to a screen in your emulator, then click AID SCAN. Tests all 28 keys (PF1-24, PA1-3, ENTER) and auto-returns to screen.</p>
+    <div id="aid-scan-summary" style="display:none;margin-bottom:8px;gap:12px;display:flex;font-size:12px">
+      <span style="color:#f87171"><b id="as-violation">0</b> VIOLATION</span>
+      <span style="color:#fb923c"><b id="as-new">0</b> NEW SCREEN</span>
+      <span style="color:#64748b"><b id="as-same">0</b> SAME</span>
+      <span style="color:#94a3b8"><b id="as-timeout">0</b> TIMEOUT</span>
+    </div>
+    <table style="margin-top:4px"><thead><tr>
+      <th>Key</th><th>Category</th><th>Status</th><th>Similarity</th><th>Preview</th>
+    </tr></thead><tbody id="aid-scan-table"></tbody></table>`;
 
   // SPOOL/RCE
   document.getElementById('apanel-spool').innerHTML = `
@@ -1736,6 +1855,57 @@ async function auditExport() {
 async function exportCsv() {
   const r = await post('/api/export_csv');
   document.getElementById('export-status').textContent = r.ok ? 'Exported: '+r.filename : 'Failed.';
+}
+
+// ---- AID Scan ----
+let aidScanPoller = null;
+async function aidScanStart() {
+  const r = await post('/api/aid_scan/start');
+  if (!r.ok) { toast(r.message, 'error'); return; }
+  toast(r.message, 'success');
+  document.getElementById('aid-scan-btn').style.display = 'none';
+  document.getElementById('aid-scan-stop-btn').style.display = '';
+  document.getElementById('aid-scan-table').innerHTML = '';
+  aidScanPoller = setInterval(aidScanPoll, 1000);
+}
+async function aidScanStop() {
+  await post('/api/aid_scan/stop');
+  if (aidScanPoller) { clearInterval(aidScanPoller); aidScanPoller = null; }
+  document.getElementById('aid-scan-btn').style.display = '';
+  document.getElementById('aid-scan-stop-btn').style.display = 'none';
+  document.getElementById('aid-scan-progress').textContent = 'Stopped';
+}
+const CAT_COLORS = {VIOLATION:'#f87171',NEW_SCREEN:'#fb923c',SAME_SCREEN:'#64748b',TIMEOUT:'#94a3b8'};
+const CAT_ORDER = {VIOLATION:0,NEW_SCREEN:1,TIMEOUT:2,SAME_SCREEN:3};
+async function aidScanPoll() {
+  const r = await fetch('/api/aid_scan/summary').then(r=>r.json());
+  const s = r.summary || {};
+  document.getElementById('as-violation').textContent = s.VIOLATION||0;
+  document.getElementById('as-new').textContent = s.NEW_SCREEN||0;
+  document.getElementById('as-same').textContent = s.SAME_SCREEN||0;
+  document.getElementById('as-timeout').textContent = s.TIMEOUT||0;
+  document.getElementById('aid-scan-progress').textContent = r.progress+'/'+r.total;
+  const tb = document.getElementById('aid-scan-table');
+  tb.innerHTML = '';
+  (r.results||[]).forEach(row => {
+    const c = CAT_COLORS[row.category]||'#94a3b8';
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>'+row.aid_key+'</td>'+
+      '<td style="color:'+c+';font-weight:bold">'+row.category+'</td>'+
+      '<td>'+row.status+'</td>'+
+      '<td>'+(row.similarity*100).toFixed(0)+'%</td>'+
+      '<td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#94a3b8" title="'+
+        (row.response_preview||'').replace(/"/g,'&quot;')+'">'+
+        (row.response_preview||'').substring(0,100)+'</td>';
+    tb.appendChild(tr);
+  });
+  if (!r.running) {
+    if (aidScanPoller) { clearInterval(aidScanPoller); aidScanPoller = null; }
+    document.getElementById('aid-scan-btn').style.display = '';
+    document.getElementById('aid-scan-stop-btn').style.display = 'none';
+    document.getElementById('aid-scan-progress').textContent = 'Done ('+r.total+' keys)';
+    toast('AID Scan complete', 'success');
+  }
 }
 
 // ---- SPOOL/RCE ----
