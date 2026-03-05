@@ -1,0 +1,99 @@
+# Findings — Pentest CICS / hack3270
+
+## Convention
+Chaque finding suit le format :
+
+```
+### F-XXXX : Titre court
+- **Date** : YYYY-MM-DD
+- **Severite** : INFO | LOW | MEDIUM | HIGH | CRITICAL
+- **Categorie** : vuln | technique | outil | config
+- **Description** : ...
+- **Reproduction** : etapes
+- **Impact** : ...
+- **Remediation** : ... (si applicable)
+- **References** : ...
+```
+
+Compteur : F-0008
+
+---
+
+### F-0001 : DVCA — Aucun controle d'acces sur transactions CICS
+- **Date** : 2026-03-05
+- **Severite** : CRITICAL
+- **Categorie** : vuln
+- **Description** : Les 186 transactions CICS par defaut sont toutes accessibles sans authentification sur DVCA. Aucun mecanisme ESM (RACF/ACF2/TSS) ne restreint l'acces.
+- **Reproduction** : hack3270 Security Audit avec `cics-default-transactions.txt` → 186/186 ACCESSIBLE
+- **Impact** : Acces complet a toutes les transactions d'administration CICS (CEDA, CEMT, CESD, CESN, CECI...) permettant la modification de la region, des ressources, et l'execution de code arbitraire.
+- **Remediation** : Implementer des profils RACF sur TCICSTRN pour chaque transaction sensible. Appliquer le principe du moindre privilege.
+- **References** : IBM CICS Security Guide, RACF TCICSTRN profile class
+
+### F-0002 : DVCA — Information disclosure dans ecran d'accueil
+- **Date** : 2026-03-05
+- **Severite** : LOW
+- **Categorie** : config
+- **Description** : L'ecran d'accueil MVS revele la version Hercules (4.7.0.11032-SDL-DEV), l'OS hote (Linux-6.6.87.2-microsoft-standard-WSL2), et la revision MVS/CE (v2.0.3). Le message invite a se connecter avec "logon username/password".
+- **Reproduction** : Connexion TN3270 sur le port 3270 → ecran d'accueil affiche les versions
+- **Impact** : Facilite la reconnaissance et l'identification de vulnerabilites specifiques a la version.
+- **Remediation** : Personnaliser l'ecran d'accueil pour masquer les versions. Supprimer l'indication sur le format de login.
+
+### F-0003 : hack3270 — list_injection_files() chemin relatif
+- **Date** : 2026-03-05
+- **Severite** : INFO
+- **Categorie** : outil
+- **Description** : `list_injection_files()` utilise `Path('injections')` relatif au CWD du processus. Si hack3270 est lance depuis un repertoire different, les fichiers d'injection ne sont pas trouves.
+- **Reproduction** : Lancer `python3 /path/to/hack3270.py ...` depuis un autre repertoire → `/api/injection_files` retourne `[]`
+- **Impact** : Fonctionnalite d'injection et d'audit inaccessible si CWD != repertoire du script.
+- **Remediation** : Utiliser `Path(__file__).parent / 'injections'` au lieu de `Path('injections')`.
+
+### F-0004 : DVCA — Hidden field expose option admin "Delete Order History"
+- **Date** : 2026-03-05
+- **Severite** : HIGH
+- **Categorie** : vuln
+- **Description** : Le menu principal MCGM contient une option cachee `99) Delete Order History` dissimilee via l'attribut hidden du champ 3270 (bit 4). hack3270 avec hack_fields active revele ce champ dans x3270 et dans le screen map.
+- **Reproduction** : Login DVCA/DVCA → CSGM → MCGM → PF5 → screen_map montre 4 champs HIDDEN dont `99) Delete Order History` a [11,4]
+- **Impact** : Un attaquant peut utiliser l'option 99 pour supprimer l'historique des commandes — fonctionnalite admin accessible a tout utilisateur.
+- **Remediation** : Ne jamais compter sur les attributs d'affichage 3270 pour la securite. Implementer des controles cote serveur (CICS RACF).
+- **References** : NetSPI "7 Ways to Hack CICS" #3 (Hidden Fields)
+
+### F-0005 : DVCA — Champs proteges editables via proxy MitM
+- **Date** : 2026-03-05
+- **Severite** : HIGH
+- **Categorie** : vuln
+- **Description** : Les champs marques "protected" dans les ecrans DVCA sont modifiables par un attaquant utilisant hack3270 avec `hack_on`. Le proxy intercepte le data stream serveur et supprime les bits de protection (bit 6) avant de relayer vers l'emulateur. L'utilisateur peut alors editer des champs normalement verrouilles.
+- **Reproduction** : hack3270 avec hack_fields {prot:1, sf:1, sfe:1, mf:1} → tous les champs PROT deviennent editables dans x3270
+- **Impact** : Modification de donnees supposees en lecture seule, bypass de validations client-side, soumission de valeurs interdites.
+- **Remediation** : Toute validation doit etre cote serveur. Les attributs de champs 3270 ne sont pas un controle de securite.
+- **References** : NetSPI "7 Ways to Hack CICS" #4 (Protected Fields)
+
+### F-0006 : hack3270 — Blocage du serveur web lors d'envoi de commandes avec hack_on [CORRIGE]
+- **Date** : 2026-03-05
+- **Severite** : MEDIUM
+- **Categorie** : outil
+- **Description** : En mode web, quand hack_on est actif, le daemon thread peut bloquer dans `client.send()` de `handle_server()`. Cela bloque le lock et rend le serveur HTTP non-responsif. Le probleme est un conflit I/O entre le daemon thread (qui lit/ecrit les sockets) et le HTTP thread (qui envoie via `send_text`/`send_keys`).
+- **Reproduction** : Activer hack_fields + envoyer du texte via API → le serveur devient non-responsif apres quelques echanges
+- **Impact** : L'outil devient inutilisable, necessite un redemarrage.
+- **Remediation** : Refactorer pour separer les I/O socket du lock HTTP, ou utiliser une queue pour les commandes sortantes.
+- **Resolution** : Implementee le 2026-03-05. (1) NonBlockingClientSocket wrappe le client socket — send() ne bloque jamais, les donnees sont bufferisees. (2) Command queue (queue.Queue) — send_keys/send_text mettent les commandes en queue, le daemon thread les envoie hors du lock. (3) _inject_worker et _audit_worker refactorises pour utiliser la queue et select() hors du lock. Validation : 82 tests unitaires + 6 tests live DVCA (tous < 10ms de latence).
+
+### F-0007 : hack3270 — ABEND code AEI9 non detecte par PR1
+- **Date** : 2026-03-05
+- **Severite** : LOW
+- **Categorie** : outil
+- **Description** : L'ABEND code AEI9 retourne par KICKS n'est pas dans la table ABEND_CODES (20 codes). La detection PR1 n'a pas capture cet ABEND bien que visible dans les logs bruts. KICKS utilise des codes differents de CICS standard.
+- **Reproduction** : Provoquer un ABEND sur DVCA (mauvais input) → le log montre "Transaction Abend Code AEI9" mais pas de detection PR1
+- **Impact** : Faux negatifs sur la detection d'ABENDs KICKS.
+- **Remediation** : Ajouter une detection generique par regex "Abend Code [A-Z0-9]{4}" en complement de la table fixe.
+
+---
+
+### F-0008 : RCE via CECI SPOOLWRITE / INTRDR
+- **Date** : 2026-03-05
+- **Severite** : CRITICAL
+- **Categorie** : technique
+- **Description** : Si la transaction CECI est accessible et que SPOOL=YES dans la SIT, un utilisateur peut soumettre du JCL arbitraire via SPOOLOPEN/SPOOLWRITE/SPOOLCLOSE. Le JCL est route vers le JES2 Internal Reader et execute comme un batch job. Equivalent a un RCE complet sur le LPAR.
+- **Reproduction** : 1) CECI SPOOLOPEN OUTPUT TOKEN(H3TK) → verifier RESPONSE: NORMAL. 2) SPOOLWRITE lignes JCL (FTP connect vers listener). 3) SPOOLCLOSE → job soumis. 4) Verifier connexion sur le listener (nc -lvp <port>).
+- **Impact** : Execution de code arbitraire sur le mainframe. Soumission de jobs batch sous l'identite CICS ou surrogate.
+- **Remediation** : Restreindre CECI aux utilisateurs autorises (RACF TCICSTRN). Desactiver SPOOL=NO dans la SIT si non necessaire. Controler les profils SURROGAT.
+- **References** : Ayoub Elaassal (mainframe pentest), Phil Young / Soldier of Fortran, hack3270 spool_check() / spool_poc_ftp()
