@@ -15,7 +15,7 @@ Chaque finding suit le format :
 - **References** : ...
 ```
 
-Compteur : F-0008
+Compteur : F-0009
 
 ---
 
@@ -97,3 +97,22 @@ Compteur : F-0008
 - **Impact** : Execution de code arbitraire sur le mainframe. Soumission de jobs batch sous l'identite CICS ou surrogate.
 - **Remediation** : Restreindre CECI aux utilisateurs autorises (RACF TCICSTRN). Desactiver SPOOL=NO dans la SIT si non necessaire. Controler les profils SURROGAT.
 - **References** : Ayoub Elaassal (mainframe pentest), Phil Young / Soldier of Fortran, hack3270 spool_check() / spool_poc_ftp()
+
+---
+
+### F-0009 : AID Scan — Touches destructrices de session necessitent operateur
+- **Date** : 2026-03-05
+- **Severite** : INFO
+- **Categorie** : technique
+- **Description** : L'AID scan automatise teste les 28 touches (PF1-24, PA1-3, ENTER) depuis un ecran cible et rejoue le chemin de navigation pour revenir a l'ecran apres chaque test. Cependant, certaines touches sont **destructrices de session** : PF3 sur KICKS/CICS execute un LOGOFF, ce qui detruit la session CICS. Le replay automatique echoue car le re-LOGON est bloque par le verrouillage userid TSO (`HIKJ56425I LOGON REJECTED, USERID DVCA IN USE`). Tous les tests suivants s'executent depuis le mauvais ecran (logon TSO au lieu de l'ecran cible).
+- **Reproduction** : 1) Connecter a DVCA, naviguer vers MCMM. 2) Lancer AID scan. 3) PF3 declenche un LOGOFF KICKS. 4) Le replay envoie CLEAR + LOGON DVCA/DVCA → echec userid lock. 5) Les 25 touches restantes sont testees depuis l'ecran TSO (faux resultats).
+- **Impact** : Faux resultats sur les touches testees apres une touche destructrice. L'operateur doit verifier manuellement les touches marquees NEW_SCREEN apres un LOGOFF.
+- **Scenario PowerPoint** : L'automatisation couvre 80% du travail (triage des 28 touches). Les 20% restants sont le jugement de l'operateur :
+  1. L'AID scan identifie que PF3 provoque un changement d'ecran radical (similarite < 5%)
+  2. L'auditeur reconnait un pattern LOGOFF dans le preview (`LOGON REJECTED`)
+  3. Il relance le scan en excluant PF3, ou teste PF3 manuellement en sachant que c'est un LOGOFF
+  4. **Lecon** : un outil de pentest automatise ne remplace pas l'expertise humaine — il la multiplie en eliminant le bruit (les 20+ touches "meme ecran") pour que l'auditeur se concentre sur les 2-3 touches qui meritent attention
+- **Ameliorations possibles** :
+  - Detection de pattern LOGOFF/SIGNOFF dans la reponse → skip automatique du replay et marquage "SESSION_LOST"
+  - Option "dry run" : tester d'abord les touches PA (non destructrices) avant les PF
+  - Mode "operateur" : pause apres chaque NEW_SCREEN pour confirmation avant replay

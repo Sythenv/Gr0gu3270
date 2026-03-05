@@ -89,3 +89,13 @@ Categories :
 2026-03-05 18:00 : [SECU] Technique RCE CICS via CECI SPOOLWRITE → INTRDR. Prereqs : CECI accessible + SPOOL=YES dans SIT + autorisations SURROGAT. Non applicable sur KICKS/DVCA (pas d'API SPOOL). PoC = FTP connect vers listener (safe, pas d'exec code).
 
 2026-03-05 18:00 : [ARCHI] 6 nouvelles methodes libhack3270 (build_ceci_payload, _spool_send_and_read, spool_check, spool_poc_ftp). 2 endpoints web (/api/spool/check, /api/spool/poc). UI web + Tkinter. 13 nouveaux tests → 95 total.
+
+## 2026-03-05 — AID Scan + Post-mortem session Claude Code
+
+2026-03-05 21:00 : [TOOL] AID Scan (PR5) implemente. 28 touches testees automatiquement (PF1-24, PA1-3, ENTER) depuis un ecran cible. Replay path extrait des logs DB (remonte au dernier CLEAR). Comparaison ecran par similarite texte. Categorisation VIOLATION/NEW_SCREEN/SAME_SCREEN. Table DB AidScan. 29 nouveaux tests → 124 total.
+
+2026-03-05 21:00 : [ARCHI] AID scan : extract_replay_path() lit les paquets client bruts en DB, build_aid_payload() gere les short-read AIDs (PA/CLEAR sans cursor address), aid_scan_replay() rejoue le chemin complet apres chaque test. Web : endpoints /api/aid_scan/start|stop|summary|results + onglet UI avec tri par criticite.
+
+2026-03-05 21:30 : [EXP] Test live AID scan sur DVCA — 3 ecrans (CSGM, MCMM, MCOR). Le scan fonctionne mais le replay echoue apres PF3 (LOGOFF KICKS) car le userid TSO est verrouille. Finding F-0009 : les touches destructrices de session necessitent l'operateur.
+
+2026-03-05 22:00 : [EXP] POST-MORTEM — Boucle de debug x3270 inutile. ~32 appels outils gaspilles (~4.70€, ~15-20 min) a tenter de connecter x3270 GUI depuis WSL au lieu d'ecrire directement un client headless. Voir research/POSTMORTEM-CLAUDE-CODE.md pour l'analyse complete et les best practices utilisateur.
