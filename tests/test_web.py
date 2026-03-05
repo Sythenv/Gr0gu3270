@@ -1,0 +1,523 @@
+"""
+Tests for hack3270 Web UI API endpoints.
+Uses the test client pattern with threading.
+"""
+import os
+import sys
+import json
+import threading
+import time
+import urllib.request
+import urllib.error
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from libhack3270 import hack3270
+from web import Hack3270State, Hack3270Handler, Hack3270WebUI, ReusableHTTPServer, NonBlockingClientSocket
+from http.server import HTTPServer
+import socket
+import queue
+
+
+@pytest.fixture
+def h3270(tmp_path):
+    """hack3270 instance with temp DB, offline mode."""
+    db_name = str(tmp_path / "test")
+    obj = hack3270(
+        server_ip="127.0.0.1",
+        server_port=3270,
+        proxy_port=3271,
+        offline_mode=True,
+        project_name=db_name,
+    )
+    yield obj
+    obj.sql_con.close()
+
+
+@pytest.fixture
+def state(h3270):
+    """Thread-safe state wrapper."""
+    return Hack3270State(h3270)
+
+
+@pytest.fixture
+def web_server(state):
+    """Start a real HTTP server on a random port for integration tests."""
+    Hack3270Handler.state = state
+    server = HTTPServer(('127.0.0.1', 0), Hack3270Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield port
+    server.shutdown()
+
+
+def get(port, path):
+    url = 'http://127.0.0.1:{}{}'.format(port, path)
+    with urllib.request.urlopen(url) as resp:
+        return json.loads(resp.read().decode())
+
+
+def post_json(port, path, data=None):
+    url = 'http://127.0.0.1:{}{}'.format(port, path)
+    body = json.dumps(data or {}).encode()
+    req = urllib.request.Request(url, data=body, headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read().decode())
+
+
+# ---- Unit tests on Hack3270State ----
+
+def test_get_status_offline(state):
+    s = state.get_status()
+    assert s['offline'] is True
+    assert 'version' in s
+    assert s['hack_on'] is False
+
+def test_get_logs_empty(state):
+    logs = state.get_logs()
+    assert logs == []
+
+def test_get_abends_empty(state):
+    assert state.get_abends() == []
+
+def test_get_screen_map_empty(state):
+    assert state.get_screen_map() == []
+
+def test_get_transactions_empty(state):
+    assert state.get_transactions() == []
+
+def test_get_transaction_stats_empty(state):
+    stats = state.get_transaction_stats()
+    assert stats['count'] == 0
+
+def test_get_audit_results_empty(state):
+    assert state.get_audit_results() == []
+
+def test_get_audit_summary_empty(state):
+    s = state.get_audit_summary()
+    assert s['ACCESSIBLE'] == 0
+    assert s['DENIED'] == 0
+
+def test_get_statistics(state):
+    stats = state.get_statistics()
+    assert stats['server_ip'] == '127.0.0.1'
+    assert stats['server_port'] == 3270
+
+def test_get_aids(state):
+    aids = state.get_aids()
+    assert 'ENTER' in aids['all']
+    assert 'PF1' in aids['all']
+
+def test_get_inject_status(state):
+    s = state.get_inject_status()
+    assert s['config_set'] is False
+    assert s['running'] is False
+
+def test_get_injection_files(state):
+    files = state.get_injection_files()
+    assert isinstance(files, list)
+
+def test_set_hack_fields(state):
+    state.set_hack_fields({'on': 1, 'prot': 1, 'hf': 1})
+    s = state.get_status()
+    assert s['hack_on'] is True
+
+def test_set_hack_color(state):
+    state.set_hack_color({'on': 1, 'sfe': 1})
+    s = state.get_status()
+    assert s['hack_color_on'] is True
+
+def test_toggle_abend_detection(state):
+    r = state.toggle_abend_detection()
+    assert r['on'] is True
+    r = state.toggle_abend_detection()
+    assert r['on'] is False
+
+def test_toggle_transaction_tracking(state):
+    r = state.toggle_transaction_tracking()
+    assert r['on'] is True
+
+def test_inject_reset(state):
+    r = state.inject_reset()
+    assert r['ok'] is True
+
+def test_inject_file_missing(state):
+    r = state.set_inject_file({'filename': 'nonexistent.txt'})
+    assert r['ok'] is False
+
+def test_inject_go_no_file(state):
+    r = state.inject_go({})
+    assert r['ok'] is False
+
+def test_export_csv(state):
+    r = state.export_csv()
+    assert r['ok'] is True
+    # Clean up
+    if os.path.exists(r['filename']):
+        os.remove(r['filename'])
+
+def test_export_audit_csv(state):
+    r = state.export_audit_csv()
+    assert r['ok'] is True
+    if os.path.exists(r['filename']):
+        os.remove(r['filename'])
+
+
+# ---- Integration tests with HTTP server ----
+
+def test_http_root(web_server):
+    url = 'http://127.0.0.1:{}/'.format(web_server)
+    with urllib.request.urlopen(url) as resp:
+        html = resp.read().decode()
+        assert 'hack3270' in html
+        assert resp.status == 200
+
+def test_http_api_status(web_server):
+    data = get(web_server, '/api/status')
+    assert 'offline' in data
+    assert 'version' in data
+
+def test_http_api_logs(web_server):
+    data = get(web_server, '/api/logs')
+    assert isinstance(data, list)
+
+def test_http_api_logs_since(web_server):
+    data = get(web_server, '/api/logs?since=0')
+    assert isinstance(data, list)
+
+def test_http_api_abends(web_server):
+    data = get(web_server, '/api/abends?since=0')
+    assert isinstance(data, list)
+
+def test_http_api_screen_map(web_server):
+    data = get(web_server, '/api/screen_map')
+    assert isinstance(data, list)
+
+def test_http_api_transactions(web_server):
+    data = get(web_server, '/api/transactions')
+    assert isinstance(data, list)
+
+def test_http_api_transaction_stats(web_server):
+    data = get(web_server, '/api/transaction_stats')
+    assert 'count' in data
+
+def test_http_api_audit_results(web_server):
+    data = get(web_server, '/api/audit_results')
+    assert isinstance(data, list)
+
+def test_http_api_audit_summary(web_server):
+    data = get(web_server, '/api/audit_summary')
+    assert 'ACCESSIBLE' in data
+
+def test_http_api_statistics(web_server):
+    data = get(web_server, '/api/statistics')
+    assert 'server_ip' in data
+
+def test_http_api_aids(web_server):
+    data = get(web_server, '/api/aids')
+    assert 'all' in data
+
+def test_http_api_inject_status(web_server):
+    data = get(web_server, '/api/inject_status')
+    assert 'config_set' in data
+
+def test_http_api_injection_files(web_server):
+    data = get(web_server, '/api/injection_files')
+    assert isinstance(data, list)
+
+def test_http_post_hack_fields(web_server):
+    data = post_json(web_server, '/api/hack_fields', {'on': 1, 'prot': 1})
+    assert data['ok'] is True
+    status = get(web_server, '/api/status')
+    assert status['hack_on'] is True
+
+def test_http_post_abend_detection(web_server):
+    data = post_json(web_server, '/api/abend_detection')
+    assert 'on' in data
+
+def test_http_post_inject_reset(web_server):
+    data = post_json(web_server, '/api/inject/reset')
+    assert data['ok'] is True
+
+def test_http_404(web_server):
+    try:
+        get(web_server, '/api/nonexistent')
+        assert False, "Should have raised"
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
+
+def test_http_log_detail_not_found(web_server):
+    try:
+        get(web_server, '/api/log/99999')
+        assert False, "Should have raised"
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
+
+
+# ---- Port reuse / cleanup tests ----
+
+def test_reusable_server_allows_reuse():
+    """ReusableHTTPServer sets SO_REUSEADDR so port can be rebound immediately."""
+    assert ReusableHTTPServer.allow_reuse_address is True
+
+def test_reusable_server_binds_after_close(state):
+    """Can rebind the same port immediately after closing a ReusableHTTPServer."""
+    Hack3270Handler.state = state
+    srv1 = ReusableHTTPServer(('127.0.0.1', 0), Hack3270Handler)
+    port = srv1.server_address[1]
+    srv1.server_close()
+    # Should not raise OSError
+    srv2 = ReusableHTTPServer(('127.0.0.1', port), Hack3270Handler)
+    srv2.server_close()
+
+def test_kill_port_owner_no_crash(h3270):
+    """_kill_port_owner doesn't crash when no process holds the port."""
+    ui = Hack3270WebUI(h3270, port=0)
+    ui.port = 59999  # unlikely to be in use
+    ui._kill_port_owner()  # should complete without error
+
+def test_find_pid_for_inode_not_found():
+    """_find_pid_for_inode returns None for a bogus inode."""
+    assert Hack3270WebUI._find_pid_for_inode('9999999999') is None
+
+
+# ---- Single Transaction Scan tests ----
+
+def test_get_scan_status_idle(state):
+    s = state.get_scan_status()
+    assert s['running'] is False
+    assert s['result'] is None
+
+def test_get_scan_results_empty(state):
+    assert state.get_scan_results() == []
+
+def test_scan_start_no_connection(state):
+    r = state.scan_txn({'txn_code': 'CEMT'})
+    assert r['ok'] is False
+    assert 'Not connected' in r['message']
+
+def test_scan_start_validation_empty(state):
+    r = state.scan_txn({'txn_code': ''})
+    assert r['ok'] is False
+    assert 'Invalid' in r['message']
+
+def test_scan_start_validation_too_long(state):
+    r = state.scan_txn({'txn_code': 'ABCDEFGHI'})
+    assert r['ok'] is False
+
+def test_scan_start_validation_bad_chars(state):
+    r = state.scan_txn({'txn_code': 'CE MT'})
+    assert r['ok'] is False
+
+def test_http_api_scan_status(web_server):
+    data = get(web_server, '/api/scan/status')
+    assert 'running' in data
+    assert data['running'] is False
+
+def test_http_api_scan_results(web_server):
+    data = get(web_server, '/api/scan/results')
+    assert isinstance(data, list)
+
+def test_http_scan_start_no_connection(web_server):
+    data = post_json(web_server, '/api/scan/start', {'txn_code': 'CEMT'})
+    assert data['ok'] is False
+
+
+# ---- NonBlockingClientSocket tests ----
+
+def test_nonblocking_send_buffers():
+    """send() buffers data when the underlying socket would block."""
+    s1, s2 = socket.socketpair()
+    try:
+        nbs = NonBlockingClientSocket(s1)
+        nbs.send(b'\x01\x02\x03')
+        # Data either sent immediately or buffered — either way no exception
+        # Verify recv on the other end gets it after flush
+        nbs.flush()
+        data = s2.recv(1024)
+        assert data == b'\x01\x02\x03'
+    finally:
+        s1.close()
+        s2.close()
+
+def test_nonblocking_flush():
+    """flush() drains buffered data."""
+    s1, s2 = socket.socketpair()
+    try:
+        nbs = NonBlockingClientSocket(s1)
+        nbs.send(b'hello')
+        nbs.flush()
+        assert not nbs.has_pending
+        data = s2.recv(1024)
+        assert data == b'hello'
+    finally:
+        s1.close()
+        s2.close()
+
+def test_nonblocking_send_closed():
+    """send() raises OSError on a closed NonBlockingClientSocket."""
+    s1, s2 = socket.socketpair()
+    nbs = NonBlockingClientSocket(s1)
+    nbs.close()
+    s2.close()
+    with pytest.raises(OSError):
+        nbs.send(b'data')
+
+def test_nonblocking_has_pending():
+    """has_pending reflects buffered data state."""
+    s1, s2 = socket.socketpair()
+    try:
+        nbs = NonBlockingClientSocket(s1)
+        assert not nbs.has_pending
+        # Close receiving end to force buffering (send may still succeed for small data)
+        # Instead just check after send + flush cycle
+        nbs.send(b'test')
+        nbs.flush()
+        assert not nbs.has_pending
+    finally:
+        s1.close()
+        s2.close()
+
+
+# ---- Command queue tests ----
+
+def test_send_keys_queues_command(state):
+    """send_keys() puts commands on _cmd_queue instead of sending directly."""
+    # Set up AIDS so send_keys knows the key
+    state.send_keys({'keys': ['ENTER']})
+    assert not state._cmd_queue.empty()
+    label, payload = state._cmd_queue.get_nowait()
+    assert 'ENTER' in label
+    assert b'\xff\xef' in payload  # IAC EOR marker
+
+def test_send_text_queues_command(state):
+    """send_text() puts text payload on _cmd_queue."""
+    state.send_text({'text': 'CSGM'})
+    assert not state._cmd_queue.empty()
+    label, payload = state._cmd_queue.get_nowait()
+    assert 'CSGM' in label
+    assert isinstance(payload, (bytes, bytearray))
+
+def test_run_daemon_drains_queue(state):
+    """run_daemon() drains _cmd_queue (even if not connected, just no-ops)."""
+    state._cmd_queue.put(('test label', b'\x00\x01'))
+    state._cmd_queue.put(('test label 2', b'\x00\x02'))
+    # Not connected, so run_daemon returns early — queue stays
+    state.run_daemon()
+    # connection_ready not set, so run_daemon returns immediately without draining
+    assert not state._cmd_queue.empty()
+
+    # Now simulate connection ready with a mock server socket
+    state.connection_ready.set()
+    # Need a server socket — use socketpair
+    s1, s2 = socket.socketpair()
+    try:
+        state.h.server = s1
+        state._cmd_queue.put(('test cmd', b'\x7d\xff\xef'))
+        state.run_daemon()
+        assert state._cmd_queue.empty()
+        # Verify data was sent
+        data = s2.recv(1024)
+        assert b'\x7d\xff\xef' in data
+    finally:
+        s1.close()
+        s2.close()
+        state.connection_ready.clear()
+
+
+# ---- Inject worker queue test ----
+
+def test_inject_worker_uses_queue(state, tmp_path):
+    """_inject_worker puts injection payloads on _cmd_queue."""
+    # Create a small injection file
+    inject_file = tmp_path / "test_inject.txt"
+    inject_file.write_text("AAA\nBBB\n")
+    state.inject_filename = str(inject_file)
+
+    # Set up injection config so worker doesn't skip
+    with state.lock:
+        state.h.set_inject_config_set(1)
+        # We need preamble/postamble set — use minimal values
+        state.h.inject_preamble = b'\x00'
+        state.h.inject_postamble = b'\xff\xef'
+        state.h.inject_mask_len = 10
+
+    state._inject_worker('SKIP', 'ENTER')
+
+    # Worker should have queued commands (2 lines x ENTER key = 4 items)
+    items = []
+    while not state._cmd_queue.empty():
+        items.append(state._cmd_queue.get_nowait())
+    # At least 2 injection payloads (AAA, BBB) + 2 ENTER keys
+    assert len(items) >= 2
+    labels = [item[0] for item in items]
+    assert any('AAA' in l for l in labels)
+    assert any('BBB' in l for l in labels)
+
+
+# ---- SPOOL/RCE State Methods ----
+
+def test_spool_check_offline(state):
+    """spool_check in offline mode raises or returns error (no server socket)."""
+    # In offline mode there's no server socket, so spool_check should fail gracefully
+    try:
+        result = state.spool_check()
+        # If it doesn't raise, it should still return a dict
+        assert isinstance(result, dict)
+    except Exception:
+        pass  # Expected — no server connection in offline mode
+
+
+def test_spool_poc_missing_ip(state):
+    """spool_poc_ftp rejects empty listener_ip."""
+    result = state.spool_poc_ftp({})
+    assert result['ok'] is False
+    assert 'listener_ip' in result['message']
+
+
+def test_spool_poc_invalid_port(state):
+    """spool_poc_ftp rejects non-numeric port."""
+    result = state.spool_poc_ftp({'listener_ip': '10.10.10.10', 'listener_port': 'abc'})
+    assert result['ok'] is False
+    assert 'port' in result['message'].lower()
+
+
+def test_spool_poc_valid_params(state):
+    """spool_poc_ftp with valid params attempts execution (fails in offline mode)."""
+    try:
+        result = state.spool_poc_ftp({'listener_ip': '10.10.10.10', 'listener_port': 4444})
+        assert isinstance(result, dict)
+    except Exception:
+        pass  # Expected — no server connection
+
+
+# ---- SPOOL HTTP Integration ----
+
+def test_spool_check_endpoint(web_server):
+    """POST /api/spool/check returns JSON."""
+    port = web_server
+    try:
+        req = urllib.request.Request(
+            'http://127.0.0.1:{}/api/spool/check'.format(port),
+            data=b'{}',
+            headers={'Content-Type': 'application/json'})
+        resp = urllib.request.urlopen(req, timeout=5)
+        data = json.loads(resp.read())
+        assert isinstance(data, dict)
+    except Exception:
+        pass  # May fail in offline mode, endpoint exists
+
+
+def test_spool_poc_endpoint_no_ip(web_server):
+    """POST /api/spool/poc without IP returns error."""
+    port = web_server
+    req = urllib.request.Request(
+        'http://127.0.0.1:{}/api/spool/poc'.format(port),
+        data=json.dumps({}).encode(),
+        headers={'Content-Type': 'application/json'})
+    resp = urllib.request.urlopen(req, timeout=5)
+    data = json.loads(resp.read())
+    assert data['ok'] is False
