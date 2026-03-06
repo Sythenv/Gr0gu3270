@@ -477,3 +477,38 @@ class TestAidScanDB:
         assert len(all_rows) == 3
         since_rows = h3270.all_aid_scan_results(start=1)
         assert len(since_rows) == 2
+
+
+# ---- PR6: Multi-Field Payload ----
+
+class TestBuildMultiFieldPayload:
+    def test_two_fields(self, h3270):
+        """Payload with 2 fields: AID + cursor + 2x SBA + EOR."""
+        fields = [('AB', 1, 10), ('CD', 3, 20)]
+        payload = h3270.build_multi_field_payload(fields, is_tn3270e=False)
+        # AID = ENTER (0x7d)
+        assert payload[0:1] == b'\x7d'
+        # Cursor address = encode(1, 10)
+        cursor = h3270.encode_buffer_address(1, 10)
+        assert payload[1:3] == cursor
+        # First SBA order
+        assert payload[3:4] == b'\x11'
+        sba1 = h3270.encode_buffer_address(1, 10)
+        assert payload[4:6] == sba1
+        # Second SBA order somewhere after
+        sba2 = h3270.encode_buffer_address(3, 20)
+        assert b'\x11' + sba2 in payload
+        # Ends with IAC EOR
+        assert payload.endswith(b'\xff\xef')
+
+    def test_tn3270e_prefix(self, h3270):
+        """TN3270E mode adds 5-byte header."""
+        fields = [('X', 0, 0)]
+        payload = h3270.build_multi_field_payload(fields, is_tn3270e=True)
+        assert payload[:5] == b'\x00\x00\x00\x00\x01'
+        assert payload.endswith(b'\xff\xef')
+
+    def test_empty_fields(self, h3270):
+        """Empty fields list returns empty bytes."""
+        payload = h3270.build_multi_field_payload([], is_tn3270e=False)
+        assert payload == b''

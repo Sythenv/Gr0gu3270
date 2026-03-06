@@ -135,6 +135,8 @@ class Gr0gu3270State:
         # daemon thread sends them to the server socket.
         self._cmd_queue = queue.Queue()
         self.last_scan_id = 0
+        self.fuzz_progress = {'current': 0, 'total': 0, 'payload': ''}
+        self.fuzz_results = []
 
     def get_status(self):
         with self.lock:
@@ -331,6 +333,7 @@ class Gr0gu3270State:
                 'running': self.inject_running,
                 'filename': self.inject_filename,
                 'message': self.inject_status_msg,
+                'progress': self.fuzz_progress,
             }
 
     def get_injection_files(self):
@@ -468,6 +471,172 @@ class Gr0gu3270State:
             self.h.set_inject_config_set(0)
             self.inject_status_msg = "Configuration cleared."
             return {'ok': True, 'message': self.inject_status_msg}
+
+    def fuzz_go(self, data):
+        if self.inject_running:
+            return {'ok': False, 'message': 'Injection already running.'}
+
+        fields = data.get('fields', [])
+        if not fields:
+            return {'ok': False, 'message': 'No fields selected.'}
+
+        filename = data.get('filename', '')
+        if not filename:
+            return {'ok': False, 'message': 'No wordlist file specified.'}
+
+        full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'injections', filename)
+        if not os.path.isfile(full_path):
+            return {'ok': False, 'message': 'File not found: ' + filename}
+
+        trunc_mode = data.get('trunc', 'SKIP')
+        key_mode = data.get('key', 'ENTER')
+
+        self.inject_running = True
+        self.fuzz_progress = {'current': 0, 'total': 0, 'payload': ''}
+        self.fuzz_results = []
+        self.inject_status_msg = 'Fuzz starting...'
+        self.inject_thread = threading.Thread(
+            target=self._fuzz_worker,
+            args=(fields, full_path, trunc_mode, key_mode),
+            daemon=True)
+        self.inject_thread.start()
+        return {'ok': True, 'message': 'Fuzz started on {} field(s).'.format(len(fields))}
+
+    def _fuzz_worker(self, fields, filepath, trunc_mode, key_mode):
+        try:
+            with open(filepath, 'r') as f:
+                lines = [l.rstrip() for l in f if l.strip()]
+
+            self.fuzz_progress['total'] = len(lines)
+
+            with self.lock:
+                ref_screen = self.h.extract_ref_screen()
+                replay_path = self.h.extract_replay_path()
+                is_tn3270e = self.h.check_inject_3270e()
+
+            aid_byte = 0x7d  # ENTER
+            aid_name = key_mode.split('+')[0] if '+' in key_mode else key_mode
+            if aid_name in self.h.AIDS:
+                aid_byte = self.h.AIDS[aid_name][0]
+
+            for idx, line in enumerate(lines):
+                if self.shutdown_flag.is_set() or not self.inject_running:
+                    break
+
+                # Build field payloads — truncate or skip per field length
+                fields_with_text = []
+                skip = False
+                for field in fields:
+                    flen = field.get('length', 0)
+                    text = line
+                    if flen > 0 and len(text) > flen:
+                        if trunc_mode == 'TRUNC':
+                            text = text[:flen]
+                        else:
+                            skip = True
+                            break
+                    fields_with_text.append((text, field['row'], field['col']))
+
+                if skip:
+                    self.fuzz_progress['current'] = idx + 1
+                    continue
+
+                with self.lock:
+                    payload = self.h.build_multi_field_payload(
+                        fields_with_text, is_tn3270e, aid=aid_byte)
+                    self.h.write_database_log('C', 'Fuzz: ' + line, payload)
+
+                self.inject_status_msg = "Sending {}/{}: {}".format(idx + 1, len(lines), line)
+                self.fuzz_progress['current'] = idx + 1
+                self.fuzz_progress['payload'] = line
+
+                # Send payload and read response (I/O outside lock)
+                server_data = self.h._aid_scan_send_and_read(payload, timeout=5)
+
+                if server_data:
+                    with self.lock:
+                        self.h.write_database_log('S', 'Fuzz resp: ' + line, server_data)
+                        classification = self.h.classify_response(server_data)
+                        self.h.detect_transaction_code(payload)
+                        similarity = self.h.screen_similarity(server_data, ref_screen) if ref_screen else -1
+                    try:
+                        self.h.client.send(server_data)
+                        self.h.client.flush()
+                    except Exception:
+                        pass
+                    self.fuzz_results.append({
+                        'payload': line,
+                        'status': classification,
+                        'size': len(server_data),
+                        'similarity': round(similarity, 3),
+                    })
+                else:
+                    self.fuzz_results.append({
+                        'payload': line,
+                        'status': 'NO_RESPONSE',
+                        'size': 0,
+                        'similarity': -1,
+                    })
+
+                # Send follow-up keys
+                followup_keys = []
+                if key_mode == 'ENTER+CLEAR':
+                    followup_keys = ['CLEAR']
+                elif key_mode == 'ENTER+PF3':
+                    followup_keys = ['PF3']
+                elif key_mode == 'ENTER+PF3+CLEAR':
+                    followup_keys = ['PF3', 'CLEAR']
+
+                for fk in followup_keys:
+                    with self.lock:
+                        fk_payload = self.h.build_aid_payload(fk, is_tn3270e)
+                    fk_response = self.h._aid_scan_send_and_read(fk_payload, timeout=1)
+                    if fk_response:
+                        try:
+                            self.h.client.send(fk_response)
+                            self.h.client.flush()
+                        except Exception:
+                            pass
+
+                # Check if we're still on the right screen
+                if ref_screen and server_data:
+                    sim = self.h.screen_similarity(server_data, ref_screen)
+                    if sim <= 0.8:
+                        # Try replay to return
+                        with self.lock:
+                            self.h.aid_scan_replay_path = replay_path
+                            last_resp = self.h.aid_scan_replay()
+                        if last_resp:
+                            sim2 = self.h.screen_similarity(last_resp, ref_screen)
+                            if sim2 <= 0.8:
+                                self.inject_status_msg = "Lost screen — fuzz stopped."
+                                break
+                        else:
+                            self.inject_status_msg = "Lost screen — replay failed."
+                            break
+
+                time.sleep(0.3)
+
+        except Exception as e:
+            self.inject_status_msg = "Fuzz error: {}".format(e)
+        finally:
+            self.inject_running = False
+            if 'Lost screen' not in self.inject_status_msg and 'error' not in self.inject_status_msg.lower():
+                self.inject_status_msg = "Fuzz complete ({} payloads).".format(
+                    self.fuzz_progress['current'])
+
+    def fuzz_stop(self):
+        self.inject_running = False
+        self.inject_status_msg = "Fuzz stopped by user."
+        return {'ok': True, 'message': 'Fuzz stopped.'}
+
+    def get_fuzz_results(self):
+        results = getattr(self, 'fuzz_results', [])
+        summary = {}
+        for r in results:
+            s = r['status']
+            summary[s] = summary.get(s, 0) + 1
+        return {'results': results, 'summary': summary}
 
     def send_keys(self, data):
         """Queue AID keys for the daemon thread to send to the server."""
@@ -797,6 +966,8 @@ class Gr0gu3270State:
                 return
             if self.h.aid_scan_running:
                 return
+            if self.inject_running:
+                return
             try:
                 self.h.daemon()
             except (BrokenPipeError, ConnectionResetError, OSError):
@@ -895,6 +1066,8 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(self.state.get_aid_scan_results(since))
         elif path == '/api/aid_scan/summary':
             self._send_json(self.state.get_aid_scan_summary())
+        elif path == '/api/inject/fuzz/results':
+            self._send_json(self.state.get_fuzz_results())
         else:
             self._send_json({'error': 'not found'}, 404)
 
@@ -955,6 +1128,12 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(result)
         elif path == '/api/aid_scan/stop':
             result = self.state.aid_scan_stop()
+            self._send_json(result)
+        elif path == '/api/inject/fuzz':
+            result = self.state.fuzz_go(data)
+            self._send_json(result)
+        elif path == '/api/inject/fuzz/stop':
+            result = self.state.fuzz_stop()
             self._send_json(result)
         elif path == '/api/spool/check':
             result = self.state.spool_check()
@@ -1181,6 +1360,9 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; padding: 6px 8px; background: #050a05; border: 1px solid var(--border); }
 .controls label { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 17px; color: var(--text); }
 .controls input[type="checkbox"] { accent-color: var(--head); }
+.fuzz-selected { background: var(--head) !important; color: var(--bg) !important; }
+.fuzz-selected td { color: var(--bg) !important; font-weight: bold; }
+.field-input:hover { background: rgba(0,150,154,0.2); }
 .btn { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 17px; transition: all 0.15s; }
 .btn:hover { border-color: var(--head); color: var(--head); }
 .btn.on { background: var(--head); border-color: var(--head); color: var(--bg); }
@@ -1329,8 +1511,34 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
     <div class="panel-header" onclick="togglePanel('panel-screen')">
       <span class="panel-title">Screen Map</span>
       <button class="btn" onclick="event.stopPropagation();loadScreenMap()" style="margin-left:auto;font-size:15px;padding:2px 8px">REFRESH</button>
+      <button class="btn" id="fuzz-btn" onclick="event.stopPropagation();openFuzzConfig()" style="display:none;font-size:15px;padding:2px 8px;margin-left:6px">FUZZ (0)</button>
     </div>
     <div class="panel-body">
+      <div id="fuzz-config" style="display:none;background:var(--input-bg);border:1px solid var(--border);padding:8px;margin-bottom:6px;font-size:15px">
+        <div class="controls" style="gap:8px;flex-wrap:wrap">
+          <span>File:</span>
+          <select id="fuzz-file-select" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit"><option value="">-- Wordlist --</option></select>
+          <span>Mode:</span>
+          <select id="fuzz-trunc" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit"><option value="SKIP">SKIP</option><option value="TRUNC">TRUNC</option></select>
+          <span>Keys:</span>
+          <select id="fuzz-key" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit">
+            <option value="ENTER">ENTER</option><option value="ENTER+CLEAR">ENTER+CLEAR</option>
+            <option value="ENTER+PF3">ENTER+PF3</option><option value="ENTER+PF3+CLEAR">ENTER+PF3+CLEAR</option>
+          </select>
+          <button class="btn" id="fuzz-start-btn" onclick="startFuzz()">START</button>
+          <button class="btn danger" id="fuzz-stop-btn" onclick="stopFuzz()" style="display:none">STOP</button>
+          <span id="fuzz-status" style="color:var(--dim)"></span>
+        </div>
+        <div id="fuzz-progress-bar" style="display:none;margin-top:6px;height:4px;background:var(--border);border-radius:2px">
+          <div id="fuzz-progress-fill" style="height:100%;background:var(--head);border-radius:2px;width:0%;transition:width 0.3s"></div>
+        </div>
+        <div id="fuzz-results-wrap" style="display:none;margin-top:8px;max-height:200px;overflow-y:auto">
+          <table style="width:100%"><thead><tr>
+            <th>Payload</th><th>Status</th><th>Size</th><th>Sim%</th>
+          </tr></thead><tbody id="fuzz-results-table"></tbody></table>
+          <div id="fuzz-summary" style="margin-top:4px;color:var(--dim);font-size:12px"></div>
+        </div>
+      </div>
       <table><thead><tr>
         <th>Pos</th><th>Type</th><th>P</th><th>H</th><th>N</th><th>Len</th><th>Content</th>
       </tr></thead><tbody id="smap-table"></tbody></table>
@@ -1387,8 +1595,7 @@ const C = {text:CS.getPropertyValue('--text').trim(), head:CS.getPropertyValue('
 const ACTIONS = [
   {id:'hack-fields', label:'Hack Fields', group:0},
   {id:'hack-color', label:'Hack Color', group:0},
-  {id:'inject-fields', label:'Inject', group:1},
-  {id:'inject-keys', label:'Keys', group:1},
+  {id:'inject-keys', label:'Send Keys', group:0},
   {id:'scan', label:'Scan', group:2},
   {id:'audit', label:'Bulk Audit', group:2},
   {id:'aid-scan', label:'AID Scan', group:2},
@@ -1401,8 +1608,7 @@ const ACTIONS = [
 
 const GROUPS = [
   {id:'grp-info', label:'GUIDE', items:['methodology','help'], location:'bottom'},
-  {id:'grp-hacks', label:'HACKS', items:['hack-fields','hack-color'], location:'top'},
-  {id:'grp-inject', label:'INJECTION', items:['inject-fields','inject-keys'], location:'top'},
+  {id:'grp-hacks', label:'HACKS', items:['hack-fields','hack-color','inject-keys'], location:'top'},
   {id:'grp-scan', label:'SCANNING', items:['scan','audit','aid-scan','spool'], location:'top'},
   {id:'grp-data', label:'DATA', items:['logs','statistics'], location:'top'},
 ];
@@ -1688,7 +1894,6 @@ function toggleAction(id) {
 }
 
 function stopActionPollers() {
-  if (pollers.injectStatus) { clearInterval(pollers.injectStatus); delete pollers.injectStatus; }
   if (pollers.aids) { clearInterval(pollers.aids); delete pollers.aids; }
   if (pollers.actionLogs) { clearInterval(pollers.actionLogs); delete pollers.actionLogs; }
   if (pollers.actionAudit) { clearInterval(pollers.actionAudit); delete pollers.actionAudit; }
@@ -1696,7 +1901,6 @@ function stopActionPollers() {
 }
 
 function startActionPollers(id) {
-  if (id === 'inject-fields') pollers.injectStatus = setInterval(loadInjectStatus, 1000);
   if (id === 'inject-keys') { loadAids(); pollers.aids = setInterval(loadAids, 1000); }
   if (id === 'logs') { loadLogs(); pollers.actionLogs = setInterval(loadLogs, 1000); }
   if (id === 'audit') { loadAuditResults(); loadAuditSummary(); pollers.actionAudit = setInterval(loadAuditResults, 2000); pollers.actionAuditSummary = setInterval(loadAuditSummary, 3000); }
@@ -1727,30 +1931,7 @@ function buildActionPanels() {
       <label><input type="checkbox" id="hc-hv" checked> High Vis</label>
     </div>`;
 
-  // Inject Fields
-  document.getElementById('apanel-inject-fields').innerHTML = `
-    <div class="controls">
-      <select id="inject-file-select"><option value="">-- File --</option></select>
-      <button class="btn" onclick="injectSetFile()">LOAD</button>
-      <span>Mask:</span>
-      <select id="inject-mask">
-        <option value="*">*</option><option value="@">@</option><option value="#">#</option>
-        <option value="$">$</option><option value="%">%</option><option value="^">^</option><option value="&">&</option>
-      </select>
-      <button class="btn" onclick="injectSetup()">SETUP</button>
-      <span>Mode:</span>
-      <select id="inject-trunc"><option value="SKIP">SKIP</option><option value="TRUNC">TRUNC</option></select>
-      <span>Keys:</span>
-      <select id="inject-key">
-        <option value="ENTER">ENTER</option><option value="ENTER+CLEAR">ENTER+CLEAR</option>
-        <option value="ENTER+PF3">ENTER+PF3</option><option value="ENTER+PF3+CLEAR">ENTER+PF3+CLEAR</option>
-      </select>
-      <button class="btn" onclick="injectGo()">INJECT</button>
-      <button class="btn danger" onclick="injectReset()">RESET</button>
-    </div>
-    <div class="inject-status" id="inject-status-msg">Not Ready.</div>`;
-
-  // Inject Keys
+  // Send Keys
   document.getElementById('apanel-inject-keys').innerHTML = `
     <div class="controls">
       <button class="btn" onclick="sendSelectedKeys()">Send Keys</button>
@@ -1950,18 +2131,132 @@ async function loadAbends() {
   } catch(e) {}
 }
 
+let selectedFuzzFields = [];
+let fuzzPoller = null;
+
 async function loadScreenMap() {
   try {
     const data = await api('/api/screen_map');
     const tbody = document.getElementById('smap-table');
     tbody.innerHTML = '';
-    data.forEach(f => {
+    selectedFuzzFields = [];
+    data.forEach((f, i) => {
       const tr = document.createElement('tr');
       if (f.hidden) tr.className = 'field-hidden';
       else if (!f.protected) tr.className = 'field-input';
+      if (!f.protected) {
+        tr.style.cursor = 'pointer';
+        tr.onclick = () => toggleFuzzField(tr, f);
+      }
       tr.innerHTML = '<td>'+f.row+','+f.col+'</td><td>'+esc(f.type)+'</td><td>'+(f.protected?'Y':'')+'</td><td>'+(f.hidden?'Y':'')+'</td><td>'+(f.numeric?'Y':'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
       tbody.appendChild(tr);
     });
+    updateFuzzButton();
+  } catch(e) {}
+}
+
+function toggleFuzzField(tr, field) {
+  const key = field.row + ',' + field.col;
+  const idx = selectedFuzzFields.findIndex(f => f.row === field.row && f.col === field.col);
+  if (idx >= 0) {
+    selectedFuzzFields.splice(idx, 1);
+    tr.classList.remove('fuzz-selected');
+  } else {
+    selectedFuzzFields.push({row: field.row, col: field.col, length: field.length});
+    tr.classList.add('fuzz-selected');
+  }
+  updateFuzzButton();
+}
+
+function updateFuzzButton() {
+  const btn = document.getElementById('fuzz-btn');
+  const n = selectedFuzzFields.length;
+  btn.textContent = 'FUZZ (' + n + ')';
+  btn.style.display = n > 0 ? '' : 'none';
+}
+
+function openFuzzConfig() {
+  const cfg = document.getElementById('fuzz-config');
+  cfg.style.display = cfg.style.display === 'none' ? 'block' : 'none';
+  // Populate wordlist dropdown if empty
+  const sel = document.getElementById('fuzz-file-select');
+  if (sel.options.length <= 1) {
+    api('/api/injection_files').then(files => {
+      files.forEach(f => {
+        const opt = document.createElement('option');
+        opt.value = f; opt.textContent = f;
+        sel.appendChild(opt);
+      });
+    }).catch(() => {});
+  }
+}
+
+async function startFuzz() {
+  const filename = document.getElementById('fuzz-file-select').value;
+  if (!filename) { toast('Select a wordlist first', 'error'); return; }
+  if (selectedFuzzFields.length === 0) { toast('Select fields to fuzz', 'error'); return; }
+  const trunc = document.getElementById('fuzz-trunc').value;
+  const key = document.getElementById('fuzz-key').value;
+  const r = await post('/api/inject/fuzz', {
+    fields: selectedFuzzFields, filename: filename, trunc: trunc, key: key
+  });
+  if (!r.ok) { toast(r.message, 'error'); return; }
+  toast(r.message, 'success');
+  document.getElementById('fuzz-start-btn').style.display = 'none';
+  document.getElementById('fuzz-stop-btn').style.display = '';
+  document.getElementById('fuzz-progress-bar').style.display = 'block';
+  fuzzPoller = setInterval(pollFuzzStatus, 800);
+}
+
+async function stopFuzz() {
+  await post('/api/inject/fuzz/stop');
+  if (fuzzPoller) { clearInterval(fuzzPoller); fuzzPoller = null; }
+  document.getElementById('fuzz-start-btn').style.display = '';
+  document.getElementById('fuzz-stop-btn').style.display = 'none';
+  document.getElementById('fuzz-status').textContent = 'Stopped';
+}
+
+async function pollFuzzStatus() {
+  try {
+    const s = await api('/api/inject_status');
+    document.getElementById('fuzz-status').textContent = s.message;
+    if (s.progress && s.progress.total > 0) {
+      const pct = Math.round(s.progress.current / s.progress.total * 100);
+      document.getElementById('fuzz-progress-fill').style.width = pct + '%';
+    }
+    if (!s.running) {
+      if (fuzzPoller) { clearInterval(fuzzPoller); fuzzPoller = null; }
+      document.getElementById('fuzz-start-btn').style.display = '';
+      document.getElementById('fuzz-stop-btn').style.display = 'none';
+      document.getElementById('fuzz-progress-bar').style.display = 'none';
+      toast('Fuzz complete', 'success');
+      loadFuzzResults();
+    }
+  } catch(e) {}
+}
+
+const FUZZ_STATUS_COLORS = {
+  ACCESSIBLE:'#4ec9b0',NEW_SCREEN:'#4ec9b0',ABEND:'#f44',DENIED:'#f90',
+  NOT_FOUND:'var(--dim)',ERROR:'#f90',SAME_SCREEN:'var(--dim)',NO_RESPONSE:'#f44',UNKNOWN:'var(--dim)'
+};
+async function loadFuzzResults() {
+  try {
+    const d = await api('/api/inject/fuzz/results');
+    const wrap = document.getElementById('fuzz-results-wrap');
+    const tbody = document.getElementById('fuzz-results-table');
+    const sumEl = document.getElementById('fuzz-summary');
+    if (!d.results || d.results.length === 0) { wrap.style.display='none'; return; }
+    wrap.style.display = 'block';
+    tbody.innerHTML = '';
+    for (const r of d.results) {
+      const tr = document.createElement('tr');
+      const col = FUZZ_STATUS_COLORS[r.status] || 'var(--fg)';
+      const sim = r.similarity >= 0 ? Math.round(r.similarity * 100) : '-';
+      tr.innerHTML = '<td>'+r.payload+'</td><td style="color:'+col+'">'+r.status+'</td><td>'+r.size+'</td><td>'+sim+'</td>';
+      tbody.appendChild(tr);
+    }
+    const parts = Object.entries(d.summary).map(([k,v]) => k+':'+v);
+    sumEl.textContent = d.results.length + ' payloads — ' + parts.join(', ');
   } catch(e) {}
 }
 
@@ -2040,17 +2335,10 @@ async function loadAids() {
   } catch(e) {}
 }
 
-async function loadInjectStatus() {
-  try {
-    const s = await api('/api/inject_status');
-    document.getElementById('inject-status-msg').textContent = s.message;
-  } catch(e) {}
-}
-
 async function loadInjectionFiles() {
   try {
     const files = await api('/api/injection_files');
-    ['inject-file-select', 'audit-file-select'].forEach(id => {
+    ['audit-file-select'].forEach(id => {
       const sel = document.getElementById(id);
       if (!sel) return;
       files.forEach(f => {
@@ -2090,27 +2378,6 @@ async function toggleHackColor() {
 async function toggleAbend() { await post('/api/abend_detection'); toast('ABEND detection toggled', 'info'); }
 async function toggleTxnTracking() { await post('/api/transaction_tracking'); toast('Transaction tracking toggled', 'info'); }
 
-async function injectSetFile() {
-  const sel = document.getElementById('inject-file-select');
-  const r = await post('/api/inject/file', {filename: sel.value});
-  document.getElementById('inject-status-msg').textContent = r.message;
-}
-async function injectSetup() {
-  const mask = document.getElementById('inject-mask').value;
-  const r = await post('/api/inject/setup', {mask: mask});
-  document.getElementById('inject-status-msg').textContent = r.message;
-}
-async function injectGo() {
-  const trunc = document.getElementById('inject-trunc').value;
-  const key = document.getElementById('inject-key').value;
-  const r = await post('/api/inject/go', {trunc: trunc, key: key});
-  document.getElementById('inject-status-msg').textContent = r.message;
-  toast('Injection started', 'success');
-}
-async function injectReset() {
-  const r = await post('/api/inject/reset');
-  document.getElementById('inject-status-msg').textContent = r.message;
-}
 async function sendSelectedKeys() {
   const checks = document.querySelectorAll('#aid-checkboxes input[type=checkbox]:checked');
   const keys = Array.from(checks).map(c => c.dataset.aid);

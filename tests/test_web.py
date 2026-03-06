@@ -460,6 +460,160 @@ def test_inject_worker_uses_queue(state, tmp_path):
     assert any('BBB' in l for l in labels)
 
 
+# ---- PR6: Field Fuzzing ----
+
+def test_fuzz_go_no_fields(state):
+    """fuzz_go rejects empty fields list."""
+    r = state.fuzz_go({'fields': [], 'filename': 'alpha.txt'})
+    assert r['ok'] is False
+    assert 'No fields' in r['message']
+
+def test_fuzz_go_no_file(state):
+    """fuzz_go rejects missing filename."""
+    r = state.fuzz_go({'fields': [{'row': 1, 'col': 10, 'length': 5}], 'filename': ''})
+    assert r['ok'] is False
+    assert 'No wordlist' in r['message']
+
+def test_fuzz_go_file_not_found(state):
+    """fuzz_go rejects nonexistent file."""
+    r = state.fuzz_go({'fields': [{'row': 1, 'col': 10, 'length': 5}], 'filename': 'nonexistent_xyz.txt'})
+    assert r['ok'] is False
+    assert 'not found' in r['message'].lower()
+
+def test_fuzz_worker_sends_payloads(state, tmp_path):
+    """_fuzz_worker sends payloads via _aid_scan_send_and_read."""
+    inject_file = tmp_path / "fuzz_test.txt"
+    inject_file.write_text("AAA\nBBB\n")
+    fields = [{'row': 1, 'col': 10, 'length': 5}]
+
+    # Mock _aid_scan_send_and_read to capture calls
+    sent = []
+    original = state.h._aid_scan_send_and_read
+    def mock_send(payload, timeout=2):
+        sent.append(payload)
+        return None  # No server response
+    state.h._aid_scan_send_and_read = mock_send
+    state.inject_running = True
+    state.fuzz_results = []
+
+    try:
+        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER')
+        # Should have sent 2 payloads (AAA, BBB)
+        assert len(sent) == 2
+        # Each payload should contain IAC EOR
+        for p in sent:
+            assert p.endswith(b'\xff\xef')
+        # Both should be NO_RESPONSE
+        assert all(r['status'] == 'NO_RESPONSE' for r in state.fuzz_results)
+    finally:
+        state.h._aid_scan_send_and_read = original
+
+def test_fuzz_worker_multi_field(state, tmp_path):
+    """Fuzz with 2 fields produces payload with 2 SBA orders."""
+    inject_file = tmp_path / "fuzz_multi.txt"
+    inject_file.write_text("X\n")
+    fields = [{'row': 1, 'col': 10, 'length': 5}, {'row': 3, 'col': 20, 'length': 8}]
+
+    sent = []
+    def mock_send(payload, timeout=2):
+        sent.append(payload)
+        return None
+    state.h._aid_scan_send_and_read = mock_send
+    state.inject_running = True
+    state.fuzz_results = []
+
+    try:
+        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER')
+        assert len(sent) == 1
+        # Payload should contain 2 SBA orders (0x11)
+        sba_count = sent[0].count(b'\x11')
+        assert sba_count == 2
+    finally:
+        del state.h._aid_scan_send_and_read
+
+def test_fuzz_worker_replay_fallback(state, tmp_path):
+    """When screen similarity drops, replay is triggered."""
+    from tests.test_core import ascii_to_ebcdic
+    inject_file = tmp_path / "fuzz_replay.txt"
+    inject_file.write_text("TEST\n")
+    fields = [{'row': 1, 'col': 10, 'length': 10}]
+
+    # Set up a reference screen in DB
+    ref_data = ascii_to_ebcdic("CICS MENU SELECT OPTION 1-9 PF KEYS AVAILABLE")
+    state.h.write_database_log('C', 'clear', b'\x6d\xff\xef')
+    state.h.write_database_log('S', 'ref', ref_data)
+
+    # Return different screen so similarity < 0.8
+    diff_screen = ascii_to_ebcdic("COMPLETELY DIFFERENT SCREEN CONTENT HERE NOW")
+    call_count = [0]
+    def mock_send(payload, timeout=2):
+        call_count[0] += 1
+        return diff_screen
+    state.h._aid_scan_send_and_read = mock_send
+
+    # Mock client.send to avoid errors
+    class FakeClient:
+        def send(self, data): pass
+        def flush(self): pass
+    state.h.client = FakeClient()
+    state.inject_running = True
+    state.fuzz_results = []
+
+    try:
+        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER')
+        # Should have stopped due to lost screen
+        assert 'Lost screen' in state.inject_status_msg
+    finally:
+        del state.h._aid_scan_send_and_read
+
+def test_fuzz_worker_lost_screen_stops(state, tmp_path):
+    """When replay also fails, fuzz stops."""
+    inject_file = tmp_path / "fuzz_lost.txt"
+    inject_file.write_text("A\nB\nC\n")
+    fields = [{'row': 0, 'col': 0, 'length': 5}]
+
+    from tests.test_core import ascii_to_ebcdic
+    ref_data = ascii_to_ebcdic("ORIGINAL MENU SCREEN WITH LOTS OF CONTENT HERE")
+    state.h.write_database_log('C', 'clear', b'\x6d\xff\xef')
+    state.h.write_database_log('S', 'ref', ref_data)
+
+    diff = ascii_to_ebcdic("TOTALLY WRONG SCREEN ERROR ERROR ERROR PANIC NOW")
+    def mock_send(payload, timeout=2):
+        return diff
+    state.h._aid_scan_send_and_read = mock_send
+
+    class FakeClient:
+        def send(self, data): pass
+    state.h.client = FakeClient()
+    state.inject_running = True
+
+    try:
+        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER')
+        assert state.inject_running is False
+        assert 'Lost screen' in state.inject_status_msg
+        # Should have stopped after first payload, not processed all 3
+        assert state.fuzz_progress['current'] <= 1
+    finally:
+        del state.h._aid_scan_send_and_read
+
+def test_fuzz_stop(state):
+    """fuzz_stop clears running flag."""
+    state.inject_running = True
+    r = state.fuzz_stop()
+    assert r['ok'] is True
+    assert state.inject_running is False
+
+def test_fuzz_http_endpoint(web_server):
+    """POST /api/inject/fuzz with no fields returns error."""
+    data = post_json(web_server, '/api/inject/fuzz', {'fields': [], 'filename': 'alpha.txt'})
+    assert data['ok'] is False
+
+def test_fuzz_stop_http_endpoint(web_server):
+    """POST /api/inject/fuzz/stop returns ok."""
+    data = post_json(web_server, '/api/inject/fuzz/stop')
+    assert data['ok'] is True
+
+
 # ---- SPOOL/RCE State Methods ----
 
 def test_spool_check_offline(state):

@@ -1498,6 +1498,26 @@ class Gr0gu3270:
             payload = b'\x00\x00\x00\x00\x01' + payload
         return payload
 
+    def build_multi_field_payload(self, fields_with_text, is_tn3270e, aid=0x7d):
+        '''Builds one TN3270 payload injecting text into multiple fields.
+        fields_with_text: list of (text, row, col) tuples
+        Returns: AID + cursor_addr + SBA1+data1 + SBA2+data2 + ... + IAC EOR
+        '''
+        if not fields_with_text:
+            return b''
+        # Cursor address = first field position
+        first_row, first_col = fields_with_text[0][1], fields_with_text[0][2]
+        cursor_addr = self.encode_buffer_address(first_row, first_col)
+        body = b''
+        for text, row, col in fields_with_text:
+            sba = self.encode_buffer_address(row, col)
+            text_ebcdic = self.get_ebcdic(text)
+            body += b'\x11' + sba + text_ebcdic
+        payload = bytes([aid]) + cursor_addr + body + b'\xff\xef'
+        if is_tn3270e:
+            payload = b'\x00\x00\x00\x00\x01' + payload
+        return payload
+
     # ---- AID Scan (PR5) ----
 
     def extract_replay_path(self):

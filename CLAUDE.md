@@ -37,7 +37,7 @@ python3 Gr0gu3270.py -t 10.10.10.10 3270                # TLS
 python3 Gr0gu3270.py --ui tk 10.10.10.10 3270           # Tkinter UI
 python3 Gr0gu3270.py --web-port 1337 10.10.10.10 3270   # web port custom
 python3 Gr0gu3270.py -o                                 # offline (analyse depuis DB)
-python3 -m pytest tests/ -v                            # tests unitaires (124 tests)
+python3 -m pytest tests/ -v                            # tests unitaires (137 tests)
 ```
 
 Python 3.11+ avec tkinter. Zero dependance externe.
@@ -46,7 +46,7 @@ Python 3.11+ avec tkinter. Zero dependance externe.
 
 - `Gr0gu3270.py` — CLI entry point (88 lignes)
 - `libGr0gu3270.py` — Core library (~2700 lignes) : protocole 3270, EBCDIC, injection, ABEND detection, screen map, transactions, security audit, AID scan, SPOOL/RCE, SQLite
-- `web.py` — Web UI (~2200 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 36 endpoints API
+- `web.py` — Web UI (~2200 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 38 endpoints API
 - `tk.py` — GUI Tkinter (~1200 lignes), 11 onglets (0-6 originaux, 7 ABEND, 8 Screen Map, 9 Transactions, 10 Security Audit)
 
 ### Data Flow
@@ -70,6 +70,7 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 - Transaction correlation : `detect_transaction_code()` — extract txn from client data.
 - Security audit : `build_clear_payload()` / `build_txn_payload()` (pure) + `audit_next()` (I/O).
 - AID scan : `extract_replay_path()` / `aid_scan_next()` / `screen_similarity()` — test 28 touches avec auto-replay.
+- Field fuzz : `build_multi_field_payload()` (pure) + `fuzz_go()` / `_fuzz_worker()` (web.py I/O) — multi-field injection from screen map.
 - SPOOL/RCE : `spool_check()` / `spool_poc_ftp()` — detection passive + PoC actif via INTRDR.
 - DB schema : 7 tables — Config, Logs, Abends, Transactions, Audit, ScanResults, AidScan.
 
@@ -86,7 +87,7 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 ### Directories
 
 - `injections/` — 16 wordlists fuzzing (alpha, numeric, CICS transactions, DB2 injections)
-- `tests/` — 124 tests unitaires pytest (test_core.py + test_web.py)
+- `tests/` — 137 tests unitaires pytest (test_core.py + test_web.py)
 - `research/` — Journal, findings, knowledge base, post-mortems
 - `framework/` — Template CLAUDE.md + script init-research.sh
 - `docs/` — Documentation humaine (STAKEHOLDERS.md)
