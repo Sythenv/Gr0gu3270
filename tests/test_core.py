@@ -425,7 +425,7 @@ class TestAidScanState:
         h3270.write_database_log('S', 'ref', ascii_to_ebcdic("MENU SCREEN"))
         h3270.aid_scan_start()
         assert h3270.aid_scan_running is True
-        assert len(h3270.aid_scan_keys) == 28
+        assert len(h3270.aid_scan_keys) == 24
         assert h3270.aid_scan_index == 0
         assert h3270.aid_scan_ref_screen is not None
         assert len(h3270.aid_scan_replay_path) >= 1
@@ -554,9 +554,9 @@ class TestAidScanDVCA:
         # Scan stopped
         assert h3270.aid_scan_running is False
         # All 28 results present (1 tested + 27 SKIPPED)
-        assert len(h3270.aid_scan_results) == 28
+        assert len(h3270.aid_scan_results) == 24
         skipped = [r for r in h3270.aid_scan_results if r['category'] == 'SKIPPED']
-        assert len(skipped) == 27
+        assert len(skipped) == 23
         assert all(not r['replay_ok'] for r in skipped)
 
     def test_transient_fail_recovery_succeeds(self, h3270):
@@ -588,7 +588,7 @@ class TestAidScanDVCA:
         assert result['replay_ok'] is False
         assert h3270.aid_scan_running is False
         skipped = [r for r in h3270.aid_scan_results if r['category'] == 'SKIPPED']
-        assert len(skipped) == 27
+        assert len(skipped) == 23
 
     def test_dynamic_content_still_matches(self, h3270):
         """DVCA: timestamp changes between ref and replay — similarity still > 0.8."""
@@ -635,7 +635,7 @@ class TestAidScanDVCA:
         assert h3270.aid_scan_running is False
 
         # 3 tested + 25 skipped = 28
-        assert len(h3270.aid_scan_results) == 28
+        assert len(h3270.aid_scan_results) == 24
         tested = [r for r in h3270.aid_scan_results if r['category'] != 'SKIPPED']
         assert len(tested) == 3
 

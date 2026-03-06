@@ -1978,7 +1978,7 @@ function buildActionPanels() {
       <button class="btn danger" id="aid-scan-stop-btn" onclick="aidScanStop()" style="display:none">STOP</button>
       <span id="aid-scan-progress" style="font-size:17px;color:var(--dim);margin-left:8px"></span>
     </div>
-    <p style="font-size:15px;color:var(--dim);margin:4px 0 8px 0">Navigate to a screen in your emulator, then click AID SCAN. Tests all 28 keys (PF1-24, PA1-3, ENTER) and auto-returns to screen.</p>
+    <p style="font-size:15px;color:var(--dim);margin:4px 0 8px 0">Navigate to a screen in your emulator, then click AID SCAN. Tests 24 keys (ENTER, PF1-2, PF4-24) and auto-returns to screen.</p>
     <div id="aid-scan-summary" style="display:none;margin-bottom:8px;gap:12px;font-size:18px">
       <span style="color:var(--alert)"><b id="as-violation">0</b> VIOLATION</span>
       <span style="color:var(--head)"><b id="as-new">0</b> NEW SCREEN</span>

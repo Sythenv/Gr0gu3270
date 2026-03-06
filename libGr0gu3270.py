@@ -1583,14 +1583,13 @@ class Gr0gu3270:
             return ('SAME_SCREEN', status, similarity)
         return ('NEW_SCREEN', status, similarity)
 
-    # Order: high-value safe keys first, risky/exit keys last.
-    # PF3 (exit), PA1-3 (attention) are most likely to kill session.
+    # Keys with discovery potential only.
+    # Excluded: PF3 (exit — known), PA1-3 (attention — rarely mapped).
     AID_SCAN_KEYS = [
         'ENTER', 'PF1', 'PF2', 'PF4', 'PF5', 'PF6',
         'PF7', 'PF8', 'PF9', 'PF10', 'PF11', 'PF12',
         'PF13', 'PF14', 'PF15', 'PF16', 'PF17', 'PF18',
         'PF19', 'PF20', 'PF21', 'PF22', 'PF23', 'PF24',
-        'PA1', 'PA2', 'PA3', 'PF3',
     ]
 
     def build_aid_payload(self, aid_name, is_tn3270e):
