@@ -1542,7 +1542,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
         </div>
       </div>
       <table><thead><tr>
-        <th>Pos</th><th>Role</th><th>H</th><th>N</th><th>Len</th><th>Content</th>
+        <th>H</th><th>N</th><th>Len</th><th>Content</th>
       </tr></thead><tbody id="smap-table"></tbody></table>
     </div>
   </div>
@@ -2161,8 +2161,7 @@ function renderScreenMap() {
       tr.style.cursor = 'pointer';
       tr.onclick = () => toggleFuzzField(tr, f);
     }
-    const role = isInput ? 'input' : (isHidden ? 'hidden' : 'label');
-    tr.innerHTML = '<td>'+f.row+','+f.col+'</td><td>'+role+'</td><td>'+(f.hidden?'Y':'')+'</td><td>'+(f.numeric?'Y':'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
+    tr.innerHTML = '<td>'+(f.hidden?'Y':'')+'</td><td>'+(f.numeric?'Y':'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
     tbody.appendChild(tr);
   });
   updateFuzzButton();
