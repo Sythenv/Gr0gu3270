@@ -1409,6 +1409,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 .toast-error { background: var(--bg); border-color: var(--alert); color: var(--alert); }
 .toast-success { background: var(--bg); border-color: var(--text); color: var(--text); }
 .toast-info { background: var(--bg); border-color: var(--head); color: var(--head); }
+.toast-warn { background: var(--bg); border-color: #ff8c00; color: #ff8c00; }
 @keyframes toast-in { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes toast-out { from { opacity: 1; } to { opacity: 0; } }
 
@@ -2479,8 +2480,18 @@ async function aidScanPoll() {
     if (aidScanPoller) { clearInterval(aidScanPoller); aidScanPoller = null; }
     document.getElementById('aid-scan-btn').style.display = '';
     document.getElementById('aid-scan-stop-btn').style.display = 'none';
-    document.getElementById('aid-scan-progress').textContent = 'Done ('+r.total+' keys)';
-    toast('AID Scan complete', 'success');
+    const nSkipped = s.SKIPPED||0;
+    const nFailed = (r.results||[]).filter(x => x.replay_ok===false && x.category!=='SKIPPED').length;
+    if (nSkipped > 0) {
+      document.getElementById('aid-scan-progress').textContent = 'Interrupted — '+nSkipped+' skipped';
+      toast('Session lost — '+nSkipped+' keys skipped (double fail)', 'warn');
+    } else if (nFailed > 0) {
+      document.getElementById('aid-scan-progress').textContent = 'Done ('+r.total+' keys, '+nFailed+' recovered)';
+      toast('AID Scan complete — '+nFailed+' key(s) needed recovery', 'warn');
+    } else {
+      document.getElementById('aid-scan-progress').textContent = 'Done ('+r.total+' keys)';
+      toast('AID Scan complete', 'success');
+    }
   }
 }
 
