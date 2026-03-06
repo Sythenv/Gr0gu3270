@@ -1511,8 +1511,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
   <div class="panel-screen" id="panel-screen">
     <div class="panel-header" onclick="togglePanel('panel-screen')">
       <span class="panel-title">Screen Map</span>
-      <button class="btn" onclick="event.stopPropagation();loadScreenMap()" style="margin-left:auto;font-size:15px;padding:2px 8px">REFRESH</button>
-      <button class="btn" id="smap-filter-btn" onclick="event.stopPropagation();toggleSmapFilter()" style="font-size:15px;padding:2px 8px;margin-left:6px">SHOW ALL</button>
+      <button class="btn" id="smap-filter-btn" onclick="event.stopPropagation();toggleSmapFilter()" style="margin-left:auto;font-size:15px;padding:2px 8px">SHOW ALL</button>
       <button class="btn" id="fuzz-btn" onclick="event.stopPropagation();openFuzzConfig()" style="display:none;font-size:15px;padding:2px 8px;margin-left:6px">FUZZ (0)</button>
     </div>
     <div class="panel-body">
