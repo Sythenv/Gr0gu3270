@@ -1084,170 +1084,248 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>hack3270</title>
 <style>
+:root {
+  --bg: #0a0a0a;
+  --text: #00969a;
+  --head: #006c4d;
+  --alert: #ff151f;
+  --border: #004d40;
+  --input-bg: #050a05;
+  --dim: #004d3a;
+  --glow: rgba(0,108,77,0.4);
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Consolas', 'Monaco', 'Courier New', monospace; background: #1a1a2e; color: #e0e0e0; font-size: 13px; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+body { font-family: 'Consolas','Monaco','Courier New',monospace; background: var(--bg); color: var(--text); font-size: 22px; display: flex; flex-direction: column; height: 100vh; overflow: hidden; text-shadow: 0 0 5px var(--glow); padding: 0 20px; align-items: center; }
+.container { max-width: 1200px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:9998; background: repeating-linear-gradient(0deg, rgba(0,0,0,0.06) 0px, rgba(0,0,0,0.06) 1px, transparent 1px, transparent 3px); }
+
+/* Reverse video helper */
+.rv { background: var(--head); color: var(--bg); padding: 1px 8px; font-weight: bold; }
 
 /* Header */
-.header { background: #16213e; padding: 6px 16px; display: flex; align-items: center; gap: 16px; border-bottom: 2px solid #0f3460; flex-shrink: 0; }
-.header h1 { color: #e94560; font-size: 18px; }
-.header .status { font-size: 12px; color: #94a3b8; }
-.header .status .online { color: #4ade80; }
-.header .status .offline { color: #f97316; }
-.header .toggles { display: flex; gap: 8px; margin-left: auto; }
-.toggle-pill { display: flex; align-items: center; gap: 4px; font-size: 11px; padding: 3px 10px; border-radius: 12px; cursor: pointer; border: 1px solid #333; background: #1a1a2e; color: #94a3b8; transition: all 0.2s; user-select: none; }
-.toggle-pill.on { background: #166534; border-color: #22c55e; color: #4ade80; }
-.toggle-pill .dot-indicator { width: 6px; height: 6px; border-radius: 50%; background: #555; }
-.toggle-pill.on .dot-indicator { background: #4ade80; }
+.header { background: var(--bg); padding: 4px 0; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.header .h-title { background: var(--head); color: var(--bg); padding: 2px 10px; font-size: 22px; font-weight: bold; }
+.header .status { font-size: 17px; color: var(--dim); }
+.header .status .online { color: var(--text); }
+.header .status .offline { color: var(--alert); }
+.header .toggles { display: flex; gap: 4px; margin-left: auto; }
+.toggle-pill { display: flex; align-items: center; justify-content: center; width: 28px; height: 22px; font-size: 17px; font-weight: bold; cursor: pointer; border: 1px solid var(--border); background: var(--bg); color: var(--dim); transition: all 0.15s; user-select: none; }
+.toggle-pill.on { background: var(--head); border-color: var(--head); color: var(--bg); }
+.toggle-pill .dot-indicator { display: none; }
 
 /* Main vertical stack */
-.main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.panel-screen { max-height: 30vh; flex-shrink: 0; border-bottom: 2px solid #0f3460; display: flex; flex-direction: column; overflow: hidden; }
+.main { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+
+/* Collapsible panels */
+.panel-screen { max-height: 25vh; flex-shrink: 0; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; transition: max-height 0.2s; }
+.panel-screen.collapsed { max-height: 26px; }
 .panel-events { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.panel-header { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #16213e; border-bottom: 1px solid #0f3460; flex-shrink: 0; }
-.panel-title { color: #e94560; font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; }
-.badge { background: #e94560; color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 8px; min-width: 16px; text-align: center; }
-.badge.zero { background: #333; color: #666; }
+.panel-events.collapsed { flex: 0; max-height: 26px; overflow: hidden; }
+.panel-header { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: var(--head); color: var(--bg); cursor: pointer; flex-shrink: 0; font-weight: bold; font-size: 18px; text-transform: uppercase; letter-spacing: 0.5px; text-shadow: none; }
+.panel-header:hover { opacity: 0.9; }
+.panel-title { color: var(--bg); font-size: 18px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; }
+.badge { background: var(--alert); color: var(--bg); font-size: 15px; padding: 1px 6px; min-width: 16px; text-align: center; font-weight: bold; }
+.badge.zero { background: var(--border); color: var(--dim); }
 .panel-body { flex: 1; overflow-y: auto; min-height: 0; }
 
 /* Event row colors */
-.ev-abnd { background: rgba(250,204,21,0.12); }
+.ev-abnd { background: rgba(255,21,31,0.06); }
 .ev-txn { background: transparent; }
-.ev-deny { background: rgba(248,113,113,0.12); }
-.ev-type { display: inline-block; font-size: 9px; font-weight: bold; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.5px; }
-.ev-type-abnd { background: #854d0e; color: #facc15; }
-.ev-type-txn { background: #1e3a5f; color: #93c5fd; }
-.ev-type-deny { background: #7f1d1d; color: #fca5a5; }
+.ev-deny { background: rgba(255,21,31,0.1); }
+.ev-type { display: inline-block; font-size: 14px; font-weight: bold; padding: 1px 5px; letter-spacing: 0.5px; }
+.ev-type-abnd { background: var(--alert); color: var(--bg); }
+.ev-type-txn { background: var(--border); color: var(--text); }
+.ev-type-deny { background: var(--alert); color: var(--bg); }
 
 /* Event counters in header */
-.event-counters { display: flex; gap: 10px; margin-left: auto; font-size: 10px; color: #94a3b8; }
+.event-counters { display: flex; gap: 10px; margin-left: auto; font-size: 15px; color: var(--bg); }
 .event-counters span { display: flex; align-items: center; gap: 3px; }
 
-/* Bottom action bar */
-.action-bar { flex-shrink: 0; border-top: 2px solid #0f3460; display: flex; flex-direction: column; }
-.action-tabs { display: flex; background: #16213e; padding: 0 4px; flex-shrink: 0; }
-.action-tabs button { background: transparent; color: #94a3b8; border: none; padding: 6px 12px; cursor: pointer; font-family: inherit; font-size: 11px; border-top: 2px solid transparent; transition: all 0.2s; }
-.action-tabs button:hover { color: #e0e0e0; background: #202040; }
-.action-tabs button.active { color: #e94560; border-top: 2px solid #e94560; }
-.action-tabs button.disabled { color: #444; cursor: not-allowed; pointer-events: none; }
-.action-tab-sep { width: 1px; background: #0f3460; margin: 4px 2px; align-self: stretch; }
-.action-panel { display: none; padding: 8px 12px; background: #1a1a2e; max-height: 220px; overflow-y: auto; }
-.action-panel.tall { max-height: min(60vh, calc(100vh - 120px)); }
+/* Accordion tool bar */
+/* Toolbar (top groups) */
+.toolbar { display: flex; gap: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.toolbar-btn { background: var(--bg); color: var(--dim); border: none; border-right: 1px solid var(--border); padding: 5px 14px; font-family: inherit; font-size: 17px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; transition: all 0.15s; }
+.toolbar-btn:hover { color: var(--text); }
+.toolbar-btn.active { background: var(--head); color: var(--bg); text-shadow: none; }
+.toolbar-panel { flex-shrink: 0; display: none; border-bottom: 1px solid var(--border); }
+.toolbar-panel.open { display: block; }
+.toolbar-panel .accordion-tabs { border-bottom: 1px solid var(--border); }
+
+/* Bottom accordion (GUIDE) */
+.action-bar { flex-shrink: 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; max-height: 50vh; scrollbar-width: none; }
+.action-bar::-webkit-scrollbar { display: none; }
+.accordion-group { border-bottom: 1px solid var(--border); }
+.accordion-header { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--bg); color: var(--text); cursor: pointer; font-size: 18px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; border: none; width: 100%; text-align: left; font-family: inherit; user-select: none; }
+.accordion-header:hover { background: #0f1a0f; }
+.accordion-header .arrow { color: var(--dim); font-size: 15px; transition: transform 0.15s; }
+.accordion-header.open .arrow { transform: rotate(90deg); }
+.accordion-header.open { background: var(--head); color: var(--bg); text-shadow: none; }
+.accordion-body { display: none; border-top: 1px solid var(--border); }
+.accordion-body.open { display: block; }
+.accordion-tabs { display: flex; background: var(--bg); border-bottom: 1px solid var(--border); }
+.accordion-tabs button { background: transparent; color: var(--dim); border: none; padding: 4px 10px; cursor: pointer; font-family: inherit; font-size: 15px; text-transform: uppercase; transition: all 0.15s; }
+.accordion-tabs button:hover { color: var(--text); }
+.accordion-tabs button.active { color: var(--bg); background: var(--head); }
+.action-panel { display: none; padding: 8px 12px; background: var(--bg); max-height: 220px; overflow-y: auto; scrollbar-width: none; }
+.action-panel::-webkit-scrollbar { display: none; }
+.action-panel.tall { max-height: min(55vh, calc(100vh - 160px)); }
 .action-panel.active { display: block; }
 
+/* Hide old tab bar — we use accordion now */
+.action-tabs { display: none; }
+
 /* Shared styles */
-.controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; padding: 6px 8px; background: #16213e; border-radius: 4px; }
-.controls label { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11px; }
-.controls input[type="checkbox"] { accent-color: #e94560; }
-.btn { background: #0f3460; color: #e0e0e0; border: 1px solid #1a4a8a; padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 11px; border-radius: 3px; transition: background 0.2s; }
-.btn:hover { background: #1a4a8a; }
-.btn.on { background: #166534; border-color: #22c55e; color: #4ade80; }
-.btn.danger { background: #7f1d1d; border-color: #ef4444; }
-.section-title { font-size: 12px; color: #e94560; margin: 6px 0 4px; border-bottom: 1px solid #333; padding-bottom: 2px; }
+.controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; padding: 6px 8px; background: #050a05; border: 1px solid var(--border); }
+.controls label { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 17px; color: var(--text); }
+.controls input[type="checkbox"] { accent-color: var(--head); }
+.btn { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 17px; transition: all 0.15s; }
+.btn:hover { border-color: var(--head); color: var(--head); }
+.btn.on { background: var(--head); border-color: var(--head); color: var(--bg); }
+.btn.danger { border-color: var(--alert); color: var(--alert); }
+.btn.danger:hover { background: var(--alert); color: var(--bg); }
+.section-title { font-size: 18px; color: var(--head); margin: 6px 0 4px; border-bottom: 1px solid var(--border); padding-bottom: 2px; }
 table { width: 100%; border-collapse: collapse; }
-table th { background: #16213e; color: #e94560; text-align: left; padding: 4px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 1; cursor: pointer; user-select: none; }
-table th:hover { background: #1a3a6e; }
-table td { padding: 3px 8px; border-bottom: 1px solid #222; font-size: 11px; }
-table tr:hover { background: #202040; }
-table tr.selected { background: #1a3a6e; }
-.detail-box { background: #0d1117; border: 1px solid #333; border-radius: 4px; padding: 8px; font-size: 11px; white-space: pre-wrap; word-break: break-all; max-height: 120px; overflow-y: auto; margin-top: 4px; }
-select { background: #16213e; color: #e0e0e0; border: 1px solid #1a4a8a; padding: 3px 6px; font-family: inherit; font-size: 11px; border-radius: 3px; }
-.stat-row { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; }
-.stat-label { color: #94a3b8; min-width: 180px; }
-.stat-value { color: #4ade80; }
-.status-accessible { background: rgba(74,222,128,0.15); }
-.status-denied { background: rgba(248,113,113,0.15); }
-.status-abend { background: rgba(250,204,21,0.15); }
-.status-not_found { background: rgba(148,163,184,0.15); }
-.status-error { background: rgba(249,115,22,0.15); }
-.summary-bar { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 10px; background: #16213e; border-radius: 4px; margin-bottom: 6px; font-size: 11px; }
+table th { background: var(--head); color: var(--bg); text-align: left; padding: 4px 8px; font-size: 15px; text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 1; cursor: pointer; user-select: none; text-shadow: none; }
+table th:hover { opacity: 0.85; }
+table td { padding: 3px 8px; border-bottom: 1px solid var(--border); font-size: 17px; }
+table tr:hover { background: rgba(0,150,154,0.08); }
+table tr.selected { background: rgba(0,150,154,0.15); }
+.detail-box { background: var(--input-bg); border: 1px solid var(--border); padding: 8px; font-size: 17px; white-space: pre-wrap; word-break: break-all; max-height: 120px; overflow-y: auto; margin-top: 4px; }
+select { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); padding: 3px 6px; font-family: inherit; font-size: 17px; }
+.stat-row { display: flex; gap: 8px; padding: 3px 0; font-size: 18px; }
+.stat-label { color: var(--dim); min-width: 180px; }
+.stat-value { color: var(--text); }
+.status-accessible { background: rgba(0,108,77,0.15); }
+.status-denied { background: rgba(255,21,31,0.1); }
+.status-abend { background: rgba(255,21,31,0.06); }
+.status-not_found { background: rgba(0,77,64,0.1); }
+.status-error { background: rgba(255,21,31,0.08); }
+.summary-bar { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 10px; background: var(--input-bg); border: 1px solid var(--border); margin-bottom: 6px; font-size: 17px; }
 .summary-bar span { display: flex; align-items: center; gap: 3px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.dot-accessible { background: #4ade80; }
-.dot-denied { background: #f87171; }
-.dot-abend { background: #facc15; }
-.dot-not_found { background: #94a3b8; }
-.dot-error { background: #f97316; }
+.dot { width: 8px; height: 8px; display: inline-block; }
+.dot-accessible { background: var(--text); }
+.dot-denied { background: var(--alert); }
+.dot-abend { background: var(--alert); opacity: 0.6; }
+.dot-not_found { background: var(--dim); }
+.dot-error { background: var(--alert); opacity: 0.4; }
 .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 2px; }
-.inject-status { padding: 6px 10px; background: #0d1117; border-radius: 4px; margin-top: 4px; font-size: 11px; min-height: 24px; }
-.help-content { background: #0d1117; padding: 12px; border-radius: 4px; white-space: pre-wrap; line-height: 1.5; font-size: 11px; }
+.inject-status { padding: 6px 10px; background: var(--input-bg); border: 1px solid var(--border); margin-top: 4px; font-size: 17px; min-height: 24px; }
+.help-content { background: var(--input-bg); border: 1px solid var(--border); padding: 12px; white-space: pre-wrap; line-height: 1.5; font-size: 17px; }
 
 /* Screen map: highlight hidden/protected */
-.field-hidden { color: #facc15; font-weight: bold; }
-.field-input { color: #4ade80; }
+.field-hidden { color: var(--alert); font-weight: bold; }
+.field-input { color: var(--text); }
 
 /* Toast notifications */
-.toast-container { position: fixed; top: 8px; right: 8px; z-index: 9999; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }
-.toast { padding: 6px 14px; border-radius: 4px; font-size: 11px; font-family: inherit; pointer-events: auto; animation: toast-in 0.2s ease, toast-out 0.3s ease 2.6s forwards; max-width: 320px; }
-.toast-error { background: #7f1d1d; border: 1px solid #ef4444; color: #fca5a5; }
-.toast-success { background: #14532d; border: 1px solid #22c55e; color: #86efac; }
-.toast-info { background: #1e3a5f; border: 1px solid #3b82f6; color: #93c5fd; }
+.toast-container { position: fixed; top: 8px; right: 8px; z-index: 10000; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }
+.toast { padding: 6px 14px; font-size: 17px; font-family: inherit; pointer-events: auto; animation: toast-in 0.2s ease, toast-out 0.3s ease 2.6s forwards; max-width: 320px; border: 1px solid; }
+.toast-error { background: var(--bg); border-color: var(--alert); color: var(--alert); }
+.toast-success { background: var(--bg); border-color: var(--text); color: var(--text); }
+.toast-info { background: var(--bg); border-color: var(--head); color: var(--head); }
 @keyframes toast-in { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes toast-out { from { opacity: 1; } to { opacity: 0; } }
 
 /* Keyboard hint */
-.kb-hint { font-size: 10px; color: #555; }
+.kb-hint { font-size: 15px; color: var(--dim); }
 
 /* Methodology */
-.method-phases { display: flex; align-items: center; gap: 0; padding: 8px 0; flex-wrap: wrap; }
-.method-phase { padding: 5px 14px; font-size: 11px; font-weight: bold; cursor: pointer; border: 1px solid #333; border-radius: 3px; background: #16213e; color: #94a3b8; transition: all 0.2s; }
-.method-phase:hover { background: #1a3a6e; color: #e0e0e0; }
-.method-phase.active { background: #e94560; color: #fff; border-color: #e94560; }
-.method-arrow { color: #333; font-size: 14px; padding: 0 2px; }
-.method-content { margin-top: 8px; }
-.method-steps { font-size: 11px; color: #94a3b8; margin-bottom: 8px; padding: 6px 8px; background: #0d1117; border-radius: 4px; }
-.method-steps ol { margin-left: 18px; }
-.method-steps li { margin: 2px 0; }
-.method-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
-.method-card { background: #16213e; border: 1px solid #1a4a8a; border-radius: 4px; padding: 8px 10px; }
-.card-term { color: #e94560; font-weight: bold; font-size: 12px; margin-bottom: 4px; }
-.card-explain { font-size: 11px; color: #e0e0e0; margin-bottom: 4px; }
-.card-analogy { font-size: 10px; color: #94a3b8; font-style: italic; margin-bottom: 4px; }
-.card-action { font-size: 10px; color: #4ade80; border-top: 1px solid #333; padding-top: 4px; }
-.method-decision { margin-top: 8px; padding: 8px; background: #0d1117; border: 1px solid #333; border-radius: 4px; }
-.node-q { color: #facc15; font-size: 11px; font-weight: bold; margin-bottom: 4px; }
-.node-a { font-size: 11px; color: #94a3b8; margin-left: 12px; margin-bottom: 4px; }
+.method-phases { display: flex; align-items: stretch; gap: 0; padding: 0 0 8px; flex-wrap: wrap; }
+.method-phase { padding: 5px 14px; font-size: 17px; font-weight: bold; cursor: pointer; border: 1px solid var(--border); border-right: none; background: var(--bg); color: var(--dim); transition: all 0.15s; }
+.method-phase:last-of-type { border-right: 1px solid var(--border); }
+.method-phase:hover { color: var(--text); }
+.method-phase.active { background: var(--head); color: var(--bg); border-color: var(--head); }
+.method-arrow { display: none; }
+.method-steps { font-size: 17px; color: var(--text); margin-bottom: 8px; padding: 8px 12px; background: var(--input-bg); border: 1px solid var(--border); }
+.method-steps ol { margin: 0; padding-left: 20px; }
+.method-steps li { margin: 3px 0; }
+.method-cards { display: grid; grid-template-columns: 1fr; gap: 6px; margin-bottom: 8px; }
+.method-card { background: var(--input-bg); border: 1px solid var(--border); padding: 8px 12px; }
+.card-term { color: var(--head); font-weight: bold; font-size: 18px; margin-bottom: 2px; }
+.card-explain { font-size: 17px; color: var(--text); margin-bottom: 2px; }
+.card-analogy { font-size: 15px; color: var(--head); font-style: italic; margin-bottom: 2px; }
+.card-action { font-size: 15px; color: var(--text); border-top: 1px solid var(--border); padding-top: 4px; margin-top: 4px; }
+.method-decision { padding: 8px 12px; background: var(--input-bg); border: 1px solid var(--border); }
+.node-q { color: var(--head); font-size: 17px; font-weight: bold; margin-bottom: 2px; }
+.node-a { font-size: 17px; color: var(--text); padding-left: 16px; margin-bottom: 8px; }
+.node-a:last-child { margin-bottom: 0; }
 .abend-ref-table { margin-top: 8px; }
-.abend-ref-table td { font-size: 11px; }
-.abend-ref-detected { background: rgba(250,204,21,0.2); font-weight: bold; }
+.abend-ref-table td { font-size: 17px; }
+.abend-ref-detected { background: rgba(255,21,31,0.15); font-weight: bold; }
+
+/* OIA Bar */
+.oia-bar { flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 3px 12px; background: var(--bg); border-top: 1px solid var(--border); font-size: 15px; color: var(--dim); }
+.oia-bar .oia-conn { color: var(--text); }
+.oia-bar .oia-conn.off { color: var(--alert); }
+.oia-bar .oia-right { margin-left: auto; }
+
+/* Splash screen */
+#splash { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.5s; }
+#splash.hidden { opacity: 0; pointer-events: none; }
+#splash .grogu-art { color: var(--text); font-size: 12px; line-height: 1.1; white-space: pre; text-align: center; margin-bottom: 16px; text-shadow: 0 0 8px var(--glow); }
+#splash .splash-title { background: var(--head); color: var(--bg); padding: 4px 24px; font-size: 30px; font-weight: bold; margin-bottom: 12px; text-shadow: none; }
+#splash .splash-status { color: var(--text); font-size: 20px; }
+@keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+#splash .splash-cursor { animation: blink 1s step-end infinite; }
 </style>
 </head>
 <body>
+<!-- SPLASH SCREEN -->
+<div id="splash">
+  <pre class="grogu-art">
+&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;
+&#x2800;&#x2800;&#x28C0;&#x28E3;&#x2847;&#x2801;&#x2801;&#x2801;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;
+&#x2800;&#x2830;&#x28FF;&#x28E7;&#x2800;&#x2800;&#x2800;&#x2800;&#x2809;&#x280B;&#x28BF;&#x283F;&#x2809;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;
+&#x2800;&#x2800;&#x2808;&#x283B;&#x28FF;&#x28E6;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2809;&#x280B;&#x28BF;&#x28F7;&#x28E4;&#x2800;&#x2800;
+&#x2800;&#x2800;&#x2800;&#x2800;&#x2808;&#x28BF;&#x28F7;&#x2800;&#x28E0;&#x28FF;&#x283D;&#x28B7;&#x2846;&#x2800;&#x2800;&#x2800;&#x28A0;&#x28FF;&#x28FF;&#x28FF;&#x28E6;&#x2800;
+&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2808;&#x283B;&#x28F7;&#x283B;&#x28FF;&#x28A7;&#x283D;&#x28FF;&#x28A7;&#x2800;&#x28C0;&#x28C0;&#x2800;&#x28BF;&#x28FF;&#x28FF;&#x28FF;&#x2897;
+&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x280B;&#x28BF;&#x28F6;&#x2800;&#x2800;&#x2880;&#x2880;&#x2800;&#x2800;&#x28BF;&#x28FF;&#x28FF;&#x28FF;&#x28BF;&#x2800;&#x2800;
+&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x280B;&#x28FF;&#x28F7;&#x2800;&#x283B;&#x28FF;&#x28F6;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;
+&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2808;&#x28BF;&#x28BF;&#x2800;&#x2800;&#x283B;&#x28FF;&#x2846;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;
+  </pre>
+  <div class="splash-title">hack3270</div>
+  <div class="splash-status" id="splash-status"><span class="splash-cursor">_</span> CONNECTING...</div>
+</div>
+
 <div class="toast-container" id="toast-container"></div>
 
+<div class="container">
 <!-- HEADER -->
 <div class="header">
-  <h1>hack3270</h1>
+  <span class="h-title">hack3270</span>
   <div class="status">
-    <span id="conn-status">...</span> |
-    <span id="project-name">...</span> |
-    <span id="version-info">...</span>
+    <span id="conn-status">...</span>
+    <span id="project-name" style="margin-left:6px"></span>
   </div>
   <div class="toggles">
-    <div class="toggle-pill" id="tgl-hack" onclick="toggleHackFields()"><span class="dot-indicator"></span> Hack</div>
-    <div class="toggle-pill" id="tgl-color" onclick="toggleHackColor()"><span class="dot-indicator"></span> Color</div>
-    <div class="toggle-pill" id="tgl-abend" onclick="toggleAbend()"><span class="dot-indicator"></span> ABEND</div>
-    <div class="toggle-pill" id="tgl-txn" onclick="toggleTxnTracking()"><span class="dot-indicator"></span> Txn</div>
+    <div class="toggle-pill" id="tgl-hack" onclick="toggleHackFields()" title="Hack Fields">H</div>
+    <div class="toggle-pill" id="tgl-color" onclick="toggleHackColor()" title="Hack Color">C</div>
+    <div class="toggle-pill" id="tgl-abend" onclick="toggleAbend()" title="ABEND Detection">A</div>
+    <div class="toggle-pill" id="tgl-txn" onclick="toggleTxnTracking()" title="Transaction Tracking">T</div>
   </div>
 </div>
 
+<!-- TOOLBAR (top groups) -->
+<div class="toolbar" id="toolbar"></div>
+<div class="toolbar-panel" id="toolbar-panel"></div>
+
 <!-- MAIN: vertical stack -->
 <div class="main">
-  <!-- Screen Map (top) -->
-  <div class="panel-screen">
-    <div class="panel-header">
+  <!-- Screen Map (top, collapsible) -->
+  <div class="panel-screen" id="panel-screen">
+    <div class="panel-header" onclick="togglePanel('panel-screen')">
       <span class="panel-title">Screen Map</span>
-      <button class="btn" onclick="loadScreenMap()" style="margin-left:auto">Refresh</button>
+      <button class="btn" onclick="event.stopPropagation();loadScreenMap()" style="margin-left:auto;font-size:15px;padding:2px 8px">REFRESH</button>
     </div>
     <div class="panel-body">
       <table><thead><tr>
-        <th>Row</th><th>Col</th><th>Type</th><th>Prot</th><th>Hid</th><th>Num</th><th>Len</th><th>Content</th>
+        <th>Pos</th><th>Type</th><th>P</th><th>H</th><th>N</th><th>Len</th><th>Content</th>
       </tr></thead><tbody id="smap-table"></tbody></table>
     </div>
   </div>
 
-  <!-- Events (bottom, flex:1) -->
-  <div class="panel-events">
-    <div class="panel-header">
+  <!-- Events (flex:1, collapsible) -->
+  <div class="panel-events" id="panel-events">
+    <div class="panel-header" onclick="togglePanel('panel-events')">
       <span class="panel-title">Events</span>
       <span class="badge zero" id="badge-events">0</span>
       <div class="event-counters">
@@ -1269,13 +1347,28 @@ select { background: #16213e; color: #e0e0e0; border: 1px solid #1a4a8a; padding
   </div>
 </div>
 
-<!-- ACTION BAR (bottom) -->
-<div class="action-bar">
-  <div class="action-tabs" id="action-tabs"></div>
+<!-- TOOL ACCORDION -->
+<div class="action-bar" id="tool-accordion"></div>
+
+<!-- Hidden legacy containers for buildActionBar compat -->
+<div style="display:none">
+  <div id="action-tabs"></div>
   <div id="action-panels"></div>
 </div>
 
+<!-- OIA BAR -->
+<div class="oia-bar">
+  <span class="oia-conn" id="oia-conn">DISCONNECTED</span>
+  <span id="oia-target"></span>
+  <span>A:<b id="oia-abnd">0</b> T:<b id="oia-txn">0</b> D:<b id="oia-deny">0</b></span>
+  <span class="oia-right" id="oia-version"></span>
+</div>
+</div><!-- /container -->
+
 <script>
+// ---- CSS variable bridge ----
+const CS = getComputedStyle(document.documentElement);
+const C = {text:CS.getPropertyValue('--text').trim(), head:CS.getPropertyValue('--head').trim(), dim:CS.getPropertyValue('--dim').trim(), alert:CS.getPropertyValue('--alert').trim()};
 // ---- Action tabs config ----
 const ACTIONS = [
   {id:'hack-fields', label:'Hack Fields', group:0},
@@ -1292,7 +1385,16 @@ const ACTIONS = [
   {id:'help', label:'Help', group:4},
 ];
 
+const GROUPS = [
+  {id:'grp-info', label:'GUIDE', items:['methodology','help'], location:'bottom'},
+  {id:'grp-hacks', label:'HACKS', items:['hack-fields','hack-color'], location:'top'},
+  {id:'grp-inject', label:'INJECTION', items:['inject-fields','inject-keys'], location:'top'},
+  {id:'grp-scan', label:'SCANNING', items:['scan','audit','aid-scan','spool'], location:'top'},
+  {id:'grp-data', label:'DATA', items:['logs','statistics'], location:'top'},
+];
+
 let activeAction = null;
+let activeGroup = null;
 let pollers = {};
 let disabledTabs = [];
 let logSince = 0, abendSince = 0, txnSince = 0, auditSince = 0;
@@ -1359,6 +1461,10 @@ function updateEventCounters() {
   document.getElementById('cnt-abnd').textContent = abnd;
   document.getElementById('cnt-txn').textContent = txn;
   document.getElementById('cnt-deny').textContent = deny;
+  // OIA bar counters
+  const oa = document.getElementById('oia-abnd'); if (oa) oa.textContent = abnd;
+  const ot = document.getElementById('oia-txn'); if (ot) ot.textContent = txn;
+  const od = document.getElementById('oia-deny'); if (od) od.textContent = deny;
   const total = eventsList.length;
   const el = document.getElementById('badge-events');
   el.textContent = total > 99 ? '99+' : total;
@@ -1391,49 +1497,180 @@ async function post(path, data={}) {
   } catch(e) { toast('API: ' + e.message, 'error'); throw e; }
 }
 
-// ---- Build action bar ----
+// ---- Build toolbar + accordion ----
 function buildActionBar() {
-  const bar = document.getElementById('action-tabs');
-  const panels = document.getElementById('action-panels');
-  let lastGroup = -1;
+  const toolbar = document.getElementById('toolbar');
+  const tbPanel = document.getElementById('toolbar-panel');
+  const acc = document.getElementById('tool-accordion');
+  // Also create hidden legacy panels for buildActionPanels compat
+  const legacyPanels = document.getElementById('action-panels');
   ACTIONS.forEach(a => {
-    if (lastGroup >= 0 && a.group !== lastGroup) {
-      const sep = document.createElement('div');
-      sep.className = 'action-tab-sep';
-      bar.appendChild(sep);
-    }
-    lastGroup = a.group;
-    const btn = document.createElement('button');
-    btn.id = 'atab-btn-' + a.id;
-    btn.textContent = a.label;
-    btn.onclick = () => toggleAction(a.id);
-    bar.appendChild(btn);
-
     const panel = document.createElement('div');
     panel.className = 'action-panel' + (a.tall ? ' tall' : '');
     panel.id = 'apanel-' + a.id;
-    panels.appendChild(panel);
+    legacyPanels.appendChild(panel);
+    const btn = document.createElement('button');
+    btn.id = 'atab-btn-' + a.id;
+    btn.style.display = 'none';
+    legacyPanels.appendChild(btn);
+  });
+
+  GROUPS.forEach(g => {
+    if (g.location === 'top') {
+      // Toolbar button
+      const btn = document.createElement('button');
+      btn.className = 'toolbar-btn';
+      btn.id = 'tb-' + g.id;
+      btn.textContent = g.label;
+      btn.onclick = () => toggleGroup(g.id);
+      toolbar.appendChild(btn);
+      // Panel content inside shared toolbar-panel
+      const wrapper = document.createElement('div');
+      wrapper.id = g.id + '-wrapper';
+      wrapper.style.display = 'none';
+      if (g.items.length > 1) {
+        const tabs = document.createElement('div');
+        tabs.className = 'accordion-tabs';
+        tabs.id = g.id + '-tabs';
+        g.items.forEach(aid => {
+          const a = ACTIONS.find(x => x.id === aid);
+          const tb = document.createElement('button');
+          tb.textContent = a.label;
+          tb.id = 'subtab-' + aid;
+          tb.onclick = () => showTool(g.id, aid);
+          tabs.appendChild(tb);
+        });
+        wrapper.appendChild(tabs);
+      }
+      const pc = document.createElement('div');
+      pc.id = g.id + '-panels';
+      g.items.forEach(aid => {
+        const a = ACTIONS.find(x => x.id === aid);
+        const p = document.createElement('div');
+        p.className = 'action-panel' + (a.tall ? ' tall' : '');
+        p.id = 'acc-panel-' + aid;
+        pc.appendChild(p);
+      });
+      wrapper.appendChild(pc);
+      tbPanel.appendChild(wrapper);
+    } else {
+      // Bottom accordion (GUIDE)
+      const group = document.createElement('div');
+      group.className = 'accordion-group';
+      group.id = g.id;
+      const hdr = document.createElement('button');
+      hdr.className = 'accordion-header';
+      hdr.innerHTML = '<span class="arrow">&#9654;</span> ' + g.label;
+      hdr.onclick = () => toggleGroup(g.id);
+      group.appendChild(hdr);
+      const body = document.createElement('div');
+      body.className = 'accordion-body';
+      body.id = g.id + '-body';
+      if (g.items.length > 1) {
+        const tabs = document.createElement('div');
+        tabs.className = 'accordion-tabs';
+        tabs.id = g.id + '-tabs';
+        g.items.forEach(aid => {
+          const a = ACTIONS.find(x => x.id === aid);
+          const tb = document.createElement('button');
+          tb.textContent = a.label;
+          tb.id = 'subtab-' + aid;
+          tb.onclick = (e) => { e.stopPropagation(); showTool(g.id, aid); };
+          tabs.appendChild(tb);
+        });
+        body.appendChild(tabs);
+      }
+      const pc = document.createElement('div');
+      pc.id = g.id + '-panels';
+      g.items.forEach(aid => {
+        const a = ACTIONS.find(x => x.id === aid);
+        const p = document.createElement('div');
+        p.className = 'action-panel' + (a.tall ? ' tall' : '');
+        p.id = 'acc-panel-' + aid;
+        pc.appendChild(p);
+      });
+      body.appendChild(pc);
+      group.appendChild(body);
+      acc.appendChild(group);
+    }
   });
   buildActionPanels();
+  ACTIONS.forEach(a => {
+    const src = document.getElementById('apanel-' + a.id);
+    const dst = document.getElementById('acc-panel-' + a.id);
+    if (src && dst) { dst.innerHTML = src.innerHTML; }
+  });
 }
 
-function toggleAction(id) {
-  if (activeAction === id) {
-    const a = ACTIONS.find(x => x.id === id);
-    document.getElementById('apanel-' + id).className = 'action-panel' + (a && a.tall ? ' tall' : '');
-    document.getElementById('atab-btn-' + id).className = '';
+function toggleGroup(gid) {
+  const g = GROUPS.find(x => x.id === gid);
+  if (!g) return;
+  const isTop = g.location === 'top';
+  const tbPanel = document.getElementById('toolbar-panel');
+
+  if (activeGroup === gid) {
+    // Close
+    if (isTop) {
+      document.getElementById('tb-' + gid).classList.remove('active');
+      document.getElementById(gid + '-wrapper').style.display = 'none';
+      tbPanel.classList.remove('open');
+    } else {
+      document.querySelector('#' + gid + ' .accordion-header').classList.remove('open');
+      document.getElementById(gid + '-body').classList.remove('open');
+    }
+    activeGroup = null;
     activeAction = null;
     stopActionPollers();
     return;
   }
-  ACTIONS.forEach(a => {
-    const cls = a.id === id ? 'action-panel' + (a.tall ? ' tall' : '') + ' active' : 'action-panel' + (a.tall ? ' tall' : '');
-    document.getElementById('apanel-' + a.id).className = cls;
-    document.getElementById('atab-btn-' + a.id).className = a.id === id ? 'active' : '';
+  // Close previous
+  if (activeGroup) {
+    const prev = GROUPS.find(x => x.id === activeGroup);
+    if (prev && prev.location === 'top') {
+      document.getElementById('tb-' + prev.id).classList.remove('active');
+      document.getElementById(prev.id + '-wrapper').style.display = 'none';
+    } else if (prev) {
+      document.querySelector('#' + prev.id + ' .accordion-header').classList.remove('open');
+      document.getElementById(prev.id + '-body').classList.remove('open');
+    }
+  }
+  // Open this
+  if (isTop) {
+    document.getElementById('tb-' + gid).classList.add('active');
+    document.getElementById(gid + '-wrapper').style.display = 'block';
+    tbPanel.classList.add('open');
+  } else {
+    document.querySelector('#' + gid + ' .accordion-header').classList.add('open');
+    document.getElementById(gid + '-body').classList.add('open');
+  }
+  activeGroup = gid;
+  showTool(gid, g.items[0]);
+}
+
+function showTool(gid, aid) {
+  const g = GROUPS.find(x => x.id === gid);
+  if (!g) return;
+  // Update sub-tabs
+  g.items.forEach(id => {
+    const tb = document.getElementById('subtab-' + id);
+    if (tb) tb.className = id === aid ? 'active' : '';
+    const p = document.getElementById('acc-panel-' + id);
+    if (p) {
+      const a = ACTIONS.find(x => x.id === id);
+      p.className = id === aid ? 'action-panel' + (a && a.tall ? ' tall' : '') + ' active' : 'action-panel' + (a && a.tall ? ' tall' : '');
+    }
   });
-  activeAction = id;
   stopActionPollers();
-  startActionPollers(id);
+  activeAction = aid;
+  startActionPollers(aid);
+}
+
+function toggleAction(id) {
+  // Legacy compat — find group and open it
+  const g = GROUPS.find(gr => gr.items.includes(id));
+  if (!g) return;
+  if (activeGroup !== g.id) toggleGroup(g.id);
+  showTool(g.id, id);
 }
 
 function stopActionPollers() {
@@ -1503,19 +1740,19 @@ function buildActionPanels() {
   document.getElementById('apanel-inject-keys').innerHTML = `
     <div class="controls">
       <button class="btn" onclick="sendSelectedKeys()">Send Keys</button>
-      <span id="send-keys-status" style="font-size:11px;color:#94a3b8">Ready.</span>
+      <span id="send-keys-status" style="font-size:17px;color:var(--dim)">Ready.</span>
     </div>
     <div class="controls checkbox-grid" id="aid-checkboxes"></div>`;
 
   // Scan
   document.getElementById('apanel-scan').innerHTML = `
     <div class="controls">
-      <input type="text" id="scan-txn-input" maxlength="8" placeholder="e.g. CEMT" style="background:#0d1117;color:#e0e0e0;border:1px solid #1a4a8a;padding:4px 8px;font-family:inherit;font-size:11px;border-radius:3px;width:100px;text-transform:uppercase">
+      <input type="text" id="scan-txn-input" maxlength="8" placeholder="e.g. CEMT" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:17px;width:100px;text-transform:uppercase">
       <button class="btn" onclick="scanStart()">SCAN</button>
       <button class="btn" onclick="scanExport()">EXPORT</button>
-      <span id="scan-status-msg" style="font-size:11px;color:#94a3b8"></span>
+      <span id="scan-status-msg" style="font-size:17px;color:var(--dim)"></span>
     </div>
-    <div id="scan-report" style="display:none;background:#0d1117;border:1px solid #333;border-radius:4px;padding:8px;font-size:11px;max-height:140px;overflow-y:auto"></div>`;
+    <div id="scan-report" style="display:none;background:var(--input-bg);border:1px solid var(--border);padding:8px;font-size:17px;max-height:140px;overflow-y:auto"></div>`;
 
   // Bulk Audit
   document.getElementById('apanel-audit').innerHTML = `
@@ -1524,7 +1761,7 @@ function buildActionPanels() {
       <button class="btn" onclick="auditStart()">START</button>
       <button class="btn danger" onclick="auditStop()">STOP</button>
       <button class="btn" onclick="auditExport()">EXPORT</button>
-      <span id="audit-status-msg" style="font-size:11px;color:#94a3b8">Ready.</span>
+      <span id="audit-status-msg" style="font-size:17px;color:var(--dim)">Ready.</span>
     </div>
     <div class="summary-bar" id="audit-summary" style="margin-top:6px">
       <span><span class="dot dot-accessible"></span><b id="sum-accessible">0</b></span>
@@ -1542,14 +1779,14 @@ function buildActionPanels() {
     <div class="controls">
       <button class="btn" id="aid-scan-btn" onclick="aidScanStart()">AID SCAN</button>
       <button class="btn danger" id="aid-scan-stop-btn" onclick="aidScanStop()" style="display:none">STOP</button>
-      <span id="aid-scan-progress" style="font-size:11px;color:#94a3b8;margin-left:8px"></span>
+      <span id="aid-scan-progress" style="font-size:17px;color:var(--dim);margin-left:8px"></span>
     </div>
-    <p style="font-size:10px;color:#64748b;margin:4px 0 8px 0">Navigate to a screen in your emulator, then click AID SCAN. Tests all 28 keys (PF1-24, PA1-3, ENTER) and auto-returns to screen.</p>
-    <div id="aid-scan-summary" style="display:none;margin-bottom:8px;gap:12px;display:flex;font-size:12px">
-      <span style="color:#f87171"><b id="as-violation">0</b> VIOLATION</span>
-      <span style="color:#fb923c"><b id="as-new">0</b> NEW SCREEN</span>
-      <span style="color:#64748b"><b id="as-same">0</b> SAME</span>
-      <span style="color:#94a3b8"><b id="as-timeout">0</b> TIMEOUT</span>
+    <p style="font-size:15px;color:var(--dim);margin:4px 0 8px 0">Navigate to a screen in your emulator, then click AID SCAN. Tests all 28 keys (PF1-24, PA1-3, ENTER) and auto-returns to screen.</p>
+    <div id="aid-scan-summary" style="display:none;margin-bottom:8px;gap:12px;font-size:18px">
+      <span style="color:var(--alert)"><b id="as-violation">0</b> VIOLATION</span>
+      <span style="color:var(--head)"><b id="as-new">0</b> NEW SCREEN</span>
+      <span style="color:var(--dim)"><b id="as-same">0</b> SAME</span>
+      <span style="color:var(--dim)"><b id="as-timeout">0</b> TIMEOUT</span>
     </div>
     <table style="margin-top:4px"><thead><tr>
       <th>Key</th><th>Category</th><th>Status</th><th>Similarity</th><th>Preview</th>
@@ -1559,19 +1796,19 @@ function buildActionPanels() {
   document.getElementById('apanel-spool').innerHTML = `
     <div class="controls">
       <button class="btn" onclick="spoolCheck()">CHECK SPOOL</button>
-      <span style="margin-left:12px;color:#94a3b8;font-size:11px">|</span>
-      <input type="text" id="spool-ip" placeholder="Listener IP" style="background:#0d1117;color:#e0e0e0;border:1px solid #1a4a8a;padding:4px 8px;font-family:inherit;font-size:11px;border-radius:3px;width:120px">
-      <input type="number" id="spool-port" placeholder="Port" value="4444" min="1" max="65535" style="background:#0d1117;color:#e0e0e0;border:1px solid #1a4a8a;padding:4px 8px;font-family:inherit;font-size:11px;border-radius:3px;width:70px">
+      <span style="margin-left:12px;color:var(--border);font-size:17px">|</span>
+      <input type="text" id="spool-ip" placeholder="Listener IP" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:17px;width:120px">
+      <input type="number" id="spool-port" placeholder="Port" value="4444" min="1" max="65535" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:17px;width:70px">
       <button class="btn danger" onclick="spoolPoc()">FTP PoC</button>
-      <span id="spool-status-msg" style="font-size:11px;color:#94a3b8">Ready.</span>
+      <span id="spool-status-msg" style="font-size:17px;color:var(--dim)">Ready.</span>
     </div>
-    <div id="spool-result" style="margin-top:6px;background:#0d1117;border:1px solid #333;border-radius:4px;padding:8px;font-size:11px;max-height:200px;overflow-y:auto;display:none"></div>`;
+    <div id="spool-result" style="margin-top:6px;background:var(--input-bg);border:1px solid var(--border);padding:8px;font-size:17px;max-height:200px;overflow-y:auto;display:none"></div>`;
 
   // Logs
   document.getElementById('apanel-logs').innerHTML = `
     <div class="controls">
       <button class="btn" onclick="exportCsv()">Export CSV</button>
-      <span id="export-status" style="font-size:10px;color:#94a3b8"></span>
+      <span id="export-status" style="font-size:15px;color:var(--dim)"></span>
     </div>
     <table><thead><tr>
       <th onclick="sortTable('logs-table',0,'num')">ID</th>
@@ -1604,15 +1841,45 @@ function startDashboardPollers() {
   loadAbends(); loadTransactions(); loadScreenMap();
 }
 
+// ---- Splash screen ----
+let splashDismissed = false;
+function dismissSplash() {
+  if (splashDismissed) return;
+  splashDismissed = true;
+  const el = document.getElementById('splash');
+  el.classList.add('hidden');
+  setTimeout(() => el.style.display = 'none', 600);
+}
+
+// ---- Panel collapse ----
+function togglePanel(id) {
+  document.getElementById(id).classList.toggle('collapsed');
+}
+
 // ---- Status polling ----
 async function pollStatus() {
   try {
     const s = await api('/api/status');
     const el = document.getElementById('conn-status');
-    if (s.offline) { el.innerHTML = '<span class="offline">OFFLINE</span>'; }
-    else { el.innerHTML = '<span class="online">CONNECTED</span>'; }
+    const oiaConn = document.getElementById('oia-conn');
+    if (s.offline) {
+      el.innerHTML = '<span class="offline">OFFLINE</span>';
+      oiaConn.textContent = 'OFFLINE';
+      oiaConn.className = 'oia-conn off';
+      // Dismiss splash immediately in offline mode
+      if (!splashDismissed) {
+        document.getElementById('splash-status').innerHTML = 'OFFLINE MODE';
+        setTimeout(dismissSplash, 800);
+      }
+    } else {
+      el.innerHTML = '<span class="online">CONNECTED</span>';
+      oiaConn.textContent = 'CONNECTED';
+      oiaConn.className = 'oia-conn';
+      if (!splashDismissed) dismissSplash();
+    }
     document.getElementById('project-name').textContent = s.project_name || '';
-    document.getElementById('version-info').textContent = 'v' + (s.version || '');
+    document.getElementById('oia-version').textContent = 'v' + (s.version || '');
+    document.getElementById('oia-target').textContent = (s.server_ip || '') + (s.server_port ? ':'+s.server_port : '');
 
     disabledTabs = s.disabled_tabs || [];
 
@@ -1627,7 +1894,7 @@ async function pollStatus() {
     txnPill.className = s.transaction_tracking ? 'toggle-pill on' : 'toggle-pill';
   } catch(e) { /* non-critical */ }
 }
-setInterval(pollStatus, 2000);
+setInterval(pollStatus, 1000);
 pollStatus();
 
 // ---- Data loaders ----
@@ -1678,7 +1945,7 @@ async function loadScreenMap() {
       const tr = document.createElement('tr');
       if (f.hidden) tr.className = 'field-hidden';
       else if (!f.protected) tr.className = 'field-input';
-      tr.innerHTML = '<td>'+f.row+'</td><td>'+f.col+'</td><td>'+esc(f.type)+'</td><td>'+(f.protected?'Y':'')+'</td><td>'+(f.hidden?'Y':'')+'</td><td>'+(f.numeric?'Y':'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
+      tr.innerHTML = '<td>'+f.row+','+f.col+'</td><td>'+esc(f.type)+'</td><td>'+(f.protected?'Y':'')+'</td><td>'+(f.hidden?'Y':'')+'</td><td>'+(f.numeric?'Y':'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
       tbody.appendChild(tr);
     });
   } catch(e) {}
@@ -1875,7 +2142,7 @@ async function aidScanStop() {
   document.getElementById('aid-scan-stop-btn').style.display = 'none';
   document.getElementById('aid-scan-progress').textContent = 'Stopped';
 }
-const CAT_COLORS = {VIOLATION:'#f87171',NEW_SCREEN:'#fb923c',SAME_SCREEN:'#64748b',TIMEOUT:'#94a3b8'};
+const CAT_COLORS = {VIOLATION:C.alert,NEW_SCREEN:C.text,SAME_SCREEN:C.dim,TIMEOUT:C.dim};
 const CAT_ORDER = {VIOLATION:0,NEW_SCREEN:1,TIMEOUT:2,SAME_SCREEN:3};
 async function aidScanPoll() {
   const r = await fetch('/api/aid_scan/summary').then(r=>r.json());
@@ -1888,13 +2155,13 @@ async function aidScanPoll() {
   const tb = document.getElementById('aid-scan-table');
   tb.innerHTML = '';
   (r.results||[]).forEach(row => {
-    const c = CAT_COLORS[row.category]||'#94a3b8';
+    const c = CAT_COLORS[row.category]||C.dim;
     const tr = document.createElement('tr');
     tr.innerHTML = '<td>'+row.aid_key+'</td>'+
       '<td style="color:'+c+';font-weight:bold">'+row.category+'</td>'+
       '<td>'+row.status+'</td>'+
       '<td>'+(row.similarity*100).toFixed(0)+'%</td>'+
-      '<td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#94a3b8" title="'+
+      '<td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;color:var(--dim)" title="'+
         (row.response_preview||'').replace(/"/g,'&quot;')+'">'+
         (row.response_preview||'').substring(0,100)+'</td>';
     tb.appendChild(tr);
@@ -1915,10 +2182,10 @@ async function spoolCheck() {
   const div = document.getElementById('spool-result');
   if (r.ok && r.result) {
     const res = r.result;
-    const color = res.status === 'SPOOL_OPEN' ? '#f87171' : '#4ade80';
+    const color = res.status === 'SPOOL_OPEN' ? 'var(--alert)' : 'var(--text)';
     div.innerHTML = '<b style="color:'+color+'">'+res.status+'</b><br>'+
       '<b>Detail:</b> '+res.detail+'<br>'+
-      '<b>Response:</b> <pre style="white-space:pre-wrap;margin:4px 0;color:#94a3b8">'+res.response_preview+'</pre>';
+      '<b>Response:</b> <pre style="white-space:pre-wrap;margin:4px 0;color:var(--dim)">'+res.response_preview+'</pre>';
     div.style.display = 'block';
     document.getElementById('spool-status-msg').textContent = res.status;
     toast('SPOOL Check: ' + res.status, res.status === 'SPOOL_OPEN' ? 'error' : 'success');
@@ -1937,12 +2204,12 @@ async function spoolPoc() {
   const div = document.getElementById('spool-result');
   if (r.ok && r.result) {
     const res = r.result;
-    const color = res.status === 'SPOOL_OPEN' ? '#f87171' : '#fbbf24';
+    const color = res.status === 'SPOOL_OPEN' ? 'var(--alert)' : 'var(--head)';
     let html = '<b style="color:'+color+'">'+res.status+'</b><br>'+
       '<b>Detail:</b> '+res.detail+'<br>'+
       '<b>Lines written:</b> '+res.lines_written+'/'+res.jcl_lines+'<br>';
     if (res.results) {
-      html += '<table style="margin-top:4px;font-size:10px"><tr><th>Line</th><th>OK</th></tr>';
+      html += '<table style="margin-top:4px;font-size:15px"><tr><th>Line</th><th>OK</th></tr>';
       res.results.forEach(l => {
         html += '<tr><td><code>'+l.line+'</code></td><td>'+(l.ok?'Y':'N')+'</td></tr>';
       });
@@ -1980,11 +2247,11 @@ async function scanPoll() {
 function renderScanReport(r) {
   const el = document.getElementById('scan-report');
   el.style.display = 'block';
-  const sc = {ACCESSIBLE:'#4ade80',DENIED:'#f87171',ABEND:'#facc15',NOT_FOUND:'#94a3b8',ERROR:'#f97316'}[r.status]||'#666';
+  const sc = {ACCESSIBLE:C.text,DENIED:C.alert,ABEND:C.alert,NOT_FOUND:C.dim,ERROR:C.alert}[r.status]||C.dim;
   let h = '<span style="font-weight:bold">'+esc(r.txn_code)+'</span> ';
-  h += '<span style="background:'+sc+';color:#000;padding:1px 8px;border-radius:3px;font-weight:bold">'+esc(r.status)+'</span> ';
-  h += '<span style="color:#94a3b8">'+((r.duration_ms||0).toFixed(1))+'ms | '+(r.response_len||0)+'B</span>';
-  if (r.error) { h += '<div style="color:#f87171;margin-top:4px">'+esc(r.error)+'</div>'; el.innerHTML=h; return; }
+  h += '<span style="background:'+sc+';color:var(--bg);padding:1px 8px;font-weight:bold">'+esc(r.status)+'</span> ';
+  h += '<span style="color:var(--dim)">'+((r.duration_ms||0).toFixed(1))+'ms | '+(r.response_len||0)+'B</span>';
+  if (r.error) { h += '<div style="color:var(--alert);margin-top:4px">'+esc(r.error)+'</div>'; el.innerHTML=h; return; }
   const esm = r.esm||{};
   h += '<div style="margin-top:4px">ESM: '+esc(esm.esm||'?');
   if (esm.evidence&&esm.evidence.length) h += ' ('+esm.evidence.map(esc).join(', ')+')';
@@ -1992,11 +2259,11 @@ function renderScanReport(r) {
   const fa = r.field_analysis||{};
   h += '<div>Fields: '+fa.total+' total, '+fa.input+' input, '+fa.hidden+' hidden</div>';
   if (fa.hidden_fields&&fa.hidden_fields.length) {
-    h += '<div style="color:#facc15">Hidden: ';
+    h += '<div style="color:var(--alert)">Hidden: ';
     h += fa.hidden_fields.map(f=>'['+f.row+','+f.col+'] '+esc(f.content)).join('; ');
     h += '</div>';
   }
-  if (r.response_preview) h += '<div style="margin-top:4px;padding:4px;background:#16213e;border-radius:3px;white-space:pre-wrap;max-height:60px;overflow-y:auto">'+esc(r.response_preview)+'</div>';
+  if (r.response_preview) h += '<div style="margin-top:4px;padding:4px;background:var(--input-bg);border:1px solid var(--border);white-space:pre-wrap;max-height:60px;overflow-y:auto">'+esc(r.response_preview)+'</div>';
   el.innerHTML = h;
 }
 async function scanExport() {
@@ -2180,7 +2447,7 @@ function renderPhaseContent() {
   // Decision tree
   if (phase.decision && phase.decision.length) {
     h += '<div class="method-decision">';
-    h += '<div style="color:#e94560;font-size:11px;font-weight:bold;margin-bottom:6px">DECISION TREE</div>';
+    h += '<div style="color:var(--head);font-size:17px;font-weight:bold;margin-bottom:6px">DECISION TREE</div>';
     phase.decision.forEach(d => {
       h += '<div class="node-q">' + esc(d.q) + '</div>';
       h += '<div class="node-a">' + esc(d.a) + '</div>';
@@ -2202,7 +2469,7 @@ function renderAbendRefTable() {
     const detected = detectedCodes.has(a.code);
     h += '<tr class="' + (detected ? 'abend-ref-detected' : '') + '">';
     h += '<td>' + esc(a.code) + '</td><td>' + esc(a.desc) + '</td><td>' + esc(a.analogy) + '</td>';
-    h += '<td>' + (detected ? '<span style="color:#facc15">YES</span>' : '') + '</td>';
+    h += '<td>' + (detected ? '<span style="color:var(--alert)">YES</span>' : '') + '</td>';
     h += '</tr>';
   });
   h += '</tbody></table></div>';
@@ -2218,13 +2485,14 @@ document.addEventListener('keydown', function(e) {
     if (k === 'b') { e.preventDefault(); toggleAbend(); return; }
     if (k === 't') { e.preventDefault(); toggleTxnTracking(); return; }
   }
-  if (e.key === 'Escape' && activeAction) {
-    toggleAction(activeAction);
+  if (e.key === 'Escape' && activeGroup) {
+    toggleGroup(activeGroup);
   }
 });
 
 // ---- Init ----
 buildActionBar();
+toggleGroup('grp-info');
 startDashboardPollers();
 </script>
 </body>
