@@ -2161,7 +2161,8 @@ function renderScreenMap() {
       tr.style.cursor = 'pointer';
       tr.onclick = () => toggleFuzzField(tr, f);
     }
-    tr.innerHTML = '<td>'+(f.hidden?'Y':'')+'</td><td>'+(f.numeric?'Y':'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
+    const dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#4c4">&nbsp;</span>';
+    tr.innerHTML = '<td>'+(f.hidden?dot:'')+'</td><td>'+(f.numeric?dot:'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
     tbody.appendChild(tr);
   });
   updateFuzzButton();
