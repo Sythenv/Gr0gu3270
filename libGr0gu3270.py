@@ -1606,6 +1606,61 @@ class Gr0gu3270:
             payload = b'\x00\x00\x00\x00\x01' + payload
         return payload
 
+    # ---- Macro Engine ----
+
+    MACRO_ACTIONS = {'CLEAR', 'SEND', 'WAIT', 'AID'}
+
+    def parse_macro(self, file_path):
+        '''Load and validate a macro JSON file. Returns (steps, error).'''
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            return None, str(e)
+        steps = data if isinstance(data, list) else data.get('steps', [])
+        if not isinstance(steps, list) or len(steps) == 0:
+            return None, 'Macro must contain a non-empty "steps" list.'
+        for i, step in enumerate(steps):
+            ok, err = self.validate_macro_step(step)
+            if not ok:
+                return None, 'Step {}: {}'.format(i, err)
+        return steps, None
+
+    def validate_macro_step(self, step):
+        '''Validate a single macro step dict. Returns (ok, error_msg).'''
+        if not isinstance(step, dict):
+            return False, 'Step must be a dict.'
+        action = step.get('action', '')
+        if action not in self.MACRO_ACTIONS:
+            return False, 'Unknown action "{}".'.format(action)
+        if action == 'SEND' and not step.get('text'):
+            return False, 'SEND requires "text".'
+        if action == 'WAIT' and not step.get('text'):
+            return False, 'WAIT requires "text".'
+        if action == 'AID':
+            key = step.get('key', '')
+            if key not in self.AIDS:
+                return False, 'Unknown AID key "{}".'.format(key)
+        return True, None
+
+    def build_macro_step_payload(self, step, is_tn3270e):
+        '''Build bytes payload for a SEND/CLEAR/AID step. Pure — no I/O.'''
+        action = step['action']
+        if action == 'CLEAR':
+            return self.build_clear_payload(is_tn3270e)
+        if action == 'AID':
+            return self.build_aid_payload(step['key'], is_tn3270e)
+        if action == 'SEND':
+            text = step['text']
+            aid_name = step.get('aid', 'ENTER')
+            aid_byte = self.AIDS.get(aid_name, b'\x7d')[0]
+            row = step.get('row')
+            col = step.get('col')
+            if row is not None and col is not None:
+                return self.build_input_payload(text, int(row), int(col), is_tn3270e, aid=aid_byte)
+            return self.build_txn_payload(text, is_tn3270e)
+        return b''
+
     def aid_scan_start(self):
         '''Starts an AID scan from the current screen.
         Extracts replay path and reference screen from logs.'''

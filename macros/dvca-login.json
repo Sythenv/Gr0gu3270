@@ -1,0 +1,18 @@
+{
+  "name": "DVCA → MCMM",
+  "steps": [
+    {"action": "CLEAR"},
+    {"action": "WAIT", "text": "ENTER LOGON"},
+    {"action": "SEND", "text": "LOGON", "aid": "ENTER"},
+    {"action": "WAIT", "text": "DVCA"},
+    {"action": "SEND", "text": "DVCA", "aid": "ENTER"},
+    {"action": "WAIT", "text": "LOGON"},
+    {"action": "SEND", "text": "LOGON", "aid": "ENTER"},
+    {"action": "WAIT", "text": "KICKS"},
+    {"action": "SEND", "text": "KICKS", "aid": "ENTER"},
+    {"action": "CLEAR"},
+    {"action": "SEND", "text": "CSGM", "aid": "ENTER"},
+    {"action": "CLEAR"},
+    {"action": "WAIT", "text": "MCMM"}
+  ]
+}

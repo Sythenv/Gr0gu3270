@@ -137,6 +137,10 @@ class Gr0gu3270State:
         self.last_scan_id = 0
         self.fuzz_progress = {'current': 0, 'total': 0, 'payload': ''}
         self.fuzz_results = []
+        self.macro_running = False
+        self.macro_thread = None
+        self.macro_progress = {'current': 0, 'total': 0, 'step': ''}
+        self.macro_error = None
 
     def get_status(self):
         with self.lock:
@@ -638,6 +642,96 @@ class Gr0gu3270State:
             summary[s] = summary.get(s, 0) + 1
         return {'results': results, 'summary': summary}
 
+    # ---- Macro Engine ----
+
+    def macro_run(self, data):
+        """Start macro execution in a daemon thread."""
+        if self.macro_running:
+            return {'ok': False, 'message': 'Macro already running.'}
+        if not self.connection_ready.is_set():
+            return {'ok': False, 'message': 'Not connected.'}
+        filename = data.get('file', '')
+        if not filename:
+            return {'ok': False, 'message': 'No macro file specified.'}
+        macro_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'macros', filename)
+        if not os.path.isfile(macro_path):
+            return {'ok': False, 'message': 'Macro file not found: {}'.format(filename)}
+        with self.lock:
+            steps, err = self.h.parse_macro(macro_path)
+        if err:
+            return {'ok': False, 'message': err}
+        self.macro_running = True
+        self.macro_error = None
+        self.macro_progress = {'current': 0, 'total': len(steps), 'step': ''}
+        self.macro_thread = threading.Thread(
+            target=self._macro_worker, args=(steps,), daemon=True)
+        self.macro_thread.start()
+        return {'ok': True, 'message': 'Macro started ({} steps).'.format(len(steps))}
+
+    def _macro_worker(self, steps):
+        try:
+            with self.lock:
+                is_tn3270e = self.h.check_inject_3270e()
+            for i, step in enumerate(steps):
+                if not self.macro_running:
+                    break
+                action = step['action']
+                self.macro_progress = {
+                    'current': i + 1, 'total': len(steps),
+                    'step': '{} {}'.format(action, step.get('text', step.get('key', '')))
+                }
+                if action == 'WAIT':
+                    ok = self._macro_wait(step['text'], step.get('timeout', 10))
+                    if not ok:
+                        self.macro_error = 'Timeout waiting for "{}".'.format(step['text'])
+                        break
+                else:
+                    with self.lock:
+                        payload = self.h.build_macro_step_payload(step, is_tn3270e)
+                    server_data = self.h._aid_scan_send_and_read(payload, timeout=5)
+                    if server_data:
+                        with self.lock:
+                            self.h.client.send(server_data)
+                            self.h.client.flush()
+                            self.h.write_database_log('S', 'macro', server_data)
+                    with self.lock:
+                        self.h.write_database_log('C', 'macro', payload)
+                    time.sleep(0.3)
+        except Exception as e:
+            self.macro_error = 'Macro error: {}'.format(e)
+        finally:
+            self.macro_running = False
+
+    def _macro_wait(self, text, timeout=10):
+        deadline = time.time() + timeout
+        while time.time() < deadline and self.macro_running:
+            with self.lock:
+                ref = self.h.extract_ref_screen()
+            if ref:
+                screen_text = self.h.get_ascii(ref)
+                if text.lower() in screen_text.lower():
+                    return True
+            time.sleep(0.3)
+        return False
+
+    def macro_stop(self):
+        self.macro_running = False
+        return {'ok': True, 'message': 'Macro stopped.'}
+
+    def get_macro_status(self):
+        return {
+            'running': self.macro_running,
+            'progress': self.macro_progress,
+            'error': self.macro_error,
+        }
+
+    def get_macro_list(self):
+        macro_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'macros')
+        if not os.path.isdir(macro_dir):
+            return {'files': []}
+        files = [f for f in sorted(os.listdir(macro_dir)) if f.endswith('.json')]
+        return {'files': files}
+
     def send_keys(self, data):
         """Queue AID keys for the daemon thread to send to the server."""
         keys = data.get('keys', [])
@@ -1069,6 +1163,10 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(self.state.get_aid_scan_summary())
         elif path == '/api/inject/fuzz/results':
             self._send_json(self.state.get_fuzz_results())
+        elif path == '/api/macro/list':
+            self._send_json(self.state.get_macro_list())
+        elif path == '/api/macro/status':
+            self._send_json(self.state.get_macro_status())
         else:
             self._send_json({'error': 'not found'}, 404)
 
@@ -1135,6 +1233,12 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(result)
         elif path == '/api/inject/fuzz/stop':
             result = self.state.fuzz_stop()
+            self._send_json(result)
+        elif path == '/api/macro/run':
+            result = self.state.macro_run(data)
+            self._send_json(result)
+        elif path == '/api/macro/stop':
+            result = self.state.macro_stop()
             self._send_json(result)
         elif path == '/api/spool/check':
             result = self.state.spool_check()
@@ -1495,7 +1599,14 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
         <span id="conn-status">...</span>
         <span id="project-name" style="margin-left:6px"></span>
       </div>
-      <div class="header-toolbar" id="toolbar"></div>
+      <div class="header-toolbar" id="toolbar">
+        <div class="macro-bar" style="display:inline-flex;align-items:center;gap:6px;margin-right:10px">
+          <select id="macro-select" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit;font-size:15px"><option value="">-- Macro --</option></select>
+          <button class="btn" id="macro-run-btn" onclick="macroRun()" style="font-size:15px;padding:2px 8px">RUN</button>
+          <button class="btn danger" id="macro-stop-btn" onclick="macroStop()" style="display:none;font-size:15px;padding:2px 8px">STOP</button>
+          <span id="macro-status" style="font-size:13px;color:var(--dim)"></span>
+        </div>
+      </div>
       <div class="toggles">
         <div class="toggle-pill" id="tgl-hack" onclick="toggleHackFields()" title="Hack Fields">H</div>
         <div class="toggle-pill" id="tgl-color" onclick="toggleHackColor()" title="Hack Color">C</div>
@@ -2809,6 +2920,59 @@ document.addEventListener('keydown', function(e) {
     toggleGroup(activeGroup);
   }
 });
+
+// ---- Macro Engine ----
+let macroPoller = null;
+async function loadMacroList() {
+  const r = await api('/api/macro/list');
+  const sel = document.getElementById('macro-select');
+  const old = sel.value;
+  sel.innerHTML = '<option value="">-- Macro --</option>';
+  (r.files||[]).forEach(f => {
+    const o = document.createElement('option');
+    o.value = f; o.textContent = f.replace('.json','');
+    sel.appendChild(o);
+  });
+  if (old) sel.value = old;
+}
+async function macroRun() {
+  const file = document.getElementById('macro-select').value;
+  if (!file) { toast('Select a macro file', 'error'); return; }
+  const r = await post('/api/macro/run', {file: file});
+  if (!r.ok) { toast(r.message, 'error'); return; }
+  toast(r.message, 'info');
+  document.getElementById('macro-run-btn').style.display = 'none';
+  document.getElementById('macro-stop-btn').style.display = '';
+  macroPoller = setInterval(macroPoll, 500);
+}
+async function macroStop() {
+  await post('/api/macro/stop');
+  if (macroPoller) { clearInterval(macroPoller); macroPoller = null; }
+  document.getElementById('macro-run-btn').style.display = '';
+  document.getElementById('macro-stop-btn').style.display = 'none';
+  document.getElementById('macro-status').textContent = 'Stopped';
+  toast('Macro stopped', 'warn');
+}
+async function macroPoll() {
+  try {
+    const s = await api('/api/macro/status');
+    const p = s.progress || {};
+    document.getElementById('macro-status').textContent = p.current+'/'+p.total+' '+p.step;
+    if (!s.running) {
+      clearInterval(macroPoller); macroPoller = null;
+      document.getElementById('macro-run-btn').style.display = '';
+      document.getElementById('macro-stop-btn').style.display = 'none';
+      if (s.error) {
+        document.getElementById('macro-status').textContent = s.error;
+        toast('Macro failed: ' + s.error, 'error');
+      } else {
+        document.getElementById('macro-status').textContent = 'Done ('+p.total+' steps)';
+        toast('Macro complete', 'success');
+      }
+    }
+  } catch(e) { clearInterval(macroPoller); macroPoller = null; }
+}
+loadMacroList();
 
 // ---- Init ----
 buildActionBar();

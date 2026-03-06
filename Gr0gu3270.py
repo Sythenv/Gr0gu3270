@@ -22,6 +22,7 @@ def main():
     arg_parser.add_argument('-d', '--debug', help="Print debugging statements (default: %(default)s)", action="store_const", dest="loglevel", const=logging.DEBUG, default=logging.WARNING)
     arg_parser.add_argument('--ui', choices=['web', 'tk'], default='web', help="UI mode: web (default) or tk")
     arg_parser.add_argument('--web-port', type=int, default=8080, help="Web UI port (default: %(default)s)")
+    arg_parser.add_argument('--macro', help="Macro file to run on startup (from macros/ dir)", default=None)
     arg_parser.add_argument("IP", help="TN3270 server IP address")
     arg_parser.add_argument("PORT", help="TN3270 server port")
 
@@ -77,6 +78,10 @@ def main():
                 print("Server connected.")
                 Gr0gu3270.check_inject_3270e()
                 ui.state.connection_ready.set()
+                if args.macro:
+                    import time
+                    time.sleep(0.5)
+                    ui.state.macro_run({'file': args.macro})
 
             t = threading.Thread(target=connect_proxy, daemon=True)
             t.start()

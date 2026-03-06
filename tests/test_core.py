@@ -673,3 +673,58 @@ class TestBuildMultiFieldPayload:
         """Empty fields list returns empty bytes."""
         payload = h3270.build_multi_field_payload([], is_tn3270e=False)
         assert payload == b''
+
+
+# ---- Macro Engine ----
+
+class TestMacroParser:
+
+    def test_parse_macro_valid(self, h3270, tmp_path):
+        """Valid macro JSON loads successfully."""
+        macro = {"name": "test", "steps": [
+            {"action": "CLEAR"},
+            {"action": "SEND", "text": "LOGON", "aid": "ENTER"},
+            {"action": "WAIT", "text": "READY"},
+            {"action": "AID", "key": "PF1"},
+        ]}
+        f = tmp_path / "test.json"
+        import json
+        f.write_text(json.dumps(macro))
+        steps, err = h3270.parse_macro(str(f))
+        assert err is None
+        assert len(steps) == 4
+
+    def test_parse_macro_invalid_action(self, h3270, tmp_path):
+        """Rejects unknown action."""
+        macro = {"steps": [{"action": "JUMP"}]}
+        f = tmp_path / "bad.json"
+        import json
+        f.write_text(json.dumps(macro))
+        steps, err = h3270.parse_macro(str(f))
+        assert steps is None
+        assert 'Unknown action' in err
+
+    def test_validate_step_send_missing_text(self, h3270):
+        """SEND without text is invalid."""
+        ok, err = h3270.validate_macro_step({"action": "SEND"})
+        assert not ok
+        assert 'text' in err.lower()
+
+    def test_build_macro_step_clear(self, h3270):
+        """CLEAR step produces correct payload."""
+        payload = h3270.build_macro_step_payload({"action": "CLEAR"}, is_tn3270e=False)
+        assert payload == b'\x6d\xff\xef'
+
+    def test_build_macro_step_send(self, h3270):
+        """SEND step with AID produces ENTER + cursor + EBCDIC text."""
+        payload = h3270.build_macro_step_payload(
+            {"action": "SEND", "text": "CSGM", "aid": "ENTER"}, is_tn3270e=False)
+        assert payload[0:1] == b'\x7d'  # ENTER AID
+        assert payload.endswith(b'\xff\xef')
+
+    def test_build_macro_step_aid(self, h3270):
+        """AID step for PF8 produces bare key payload."""
+        payload = h3270.build_macro_step_payload(
+            {"action": "AID", "key": "PF8"}, is_tn3270e=False)
+        assert payload[0:1] == b'\xf8'  # PF8
+        assert payload.endswith(b'\xff\xef')
