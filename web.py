@@ -1542,7 +1542,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
         </div>
       </div>
       <table><thead><tr>
-        <th>H</th><th>N</th><th>Len</th><th>Content</th>
+        <th style="text-align:center">H</th><th style="text-align:center">N</th><th>Len</th><th>Content</th>
       </tr></thead><tbody id="smap-table"></tbody></table>
     </div>
   </div>
@@ -2161,7 +2161,7 @@ function renderScreenMap() {
       tr.style.cursor = 'pointer';
       tr.onclick = () => toggleFuzzField(tr, f);
     }
-    const dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#4c4">&nbsp;</span>';
+    const dot = '<span style="display:block;margin:auto;width:8px;height:8px;border-radius:50%;background:var(--text)"></span>';
     tr.innerHTML = '<td>'+(f.hidden?dot:'')+'</td><td>'+(f.numeric?dot:'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
     tbody.appendChild(tr);
   });
