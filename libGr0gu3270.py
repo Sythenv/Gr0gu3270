@@ -1052,6 +1052,16 @@ class Gr0gu3270:
                     'description': description
                 })
 
+        # Fallback: regex for ABEND codes not in static dict
+        for m in re.finditer(r'(?:Abend Code |ABEND )\(?([A-Z0-9]{4})\)?', ascii_text):
+            code = m.group(1)
+            if code not in [d['code'] for d in detections]:
+                detections.append({
+                    'type': 'ABEND',
+                    'code': code,
+                    'description': 'Unknown ABEND (not in catalog)',
+                })
+
         # Check for DFHxxxx error messages
         for prefix in CICS_ERROR_PREFIXES:
             pattern = prefix + r'[0-9]{4}'
@@ -2245,7 +2255,7 @@ class Gr0gu3270:
 
     def list_injection_files(self):
         '''Lists available injection files from the injections/ directory'''
-        injection_dir = Path('injections')
+        injection_dir = Path(__file__).parent / 'injections'
         if not injection_dir.is_dir():
             return []
         return sorted([f.name for f in injection_dir.iterdir()

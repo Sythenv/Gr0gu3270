@@ -2275,7 +2275,7 @@ function renderScreenMap() {
     if (isHidden) tr.className = 'field-hidden';
     else if (isInput) tr.className = 'field-input';
     else tr.className = 'field-label';
-    if (isInput) {
+    if (isInput || isHidden) {
       tr.style.cursor = 'pointer';
       tr.onclick = () => toggleFuzzField(tr, f);
     }

@@ -728,3 +728,33 @@ class TestMacroParser:
             {"action": "AID", "key": "PF8"}, is_tn3270e=False)
         assert payload[0:1] == b'\xf8'  # PF8
         assert payload.endswith(b'\xff\xef')
+
+
+# ---- F-0003: Injection files path ----
+
+class TestListInjectionFiles:
+    def test_list_injection_files_from_any_cwd(self, h3270, tmp_path, monkeypatch):
+        """list_injection_files() works even when cwd is not the project root."""
+        monkeypatch.chdir(tmp_path)
+        files = h3270.list_injection_files()
+        assert len(files) > 0
+        assert all(f.endswith('.txt') for f in files)
+
+
+# ---- F-0007: ABEND regex fallback ----
+
+class TestAbendRegexFallback:
+    def test_detect_abend_regex_fallback(self, h3270):
+        """Unknown ABEND code AEI9 detected via regex fallback."""
+        data = ascii_to_ebcdic("Abend Code AEI9")
+        detections = h3270.detect_abend(data)
+        codes = [d['code'] for d in detections]
+        assert 'AEI9' in codes
+        assert any(d['description'] == 'Unknown ABEND (not in catalog)' for d in detections)
+
+    def test_detect_abend_regex_no_duplicate(self, h3270):
+        """Known ABEND ASRA found by dict should not be duplicated by regex."""
+        data = ascii_to_ebcdic("ABEND ASRA in program")
+        detections = h3270.detect_abend(data)
+        asra_count = sum(1 for d in detections if d['code'] == 'ASRA')
+        assert asra_count == 1
