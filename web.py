@@ -1400,6 +1400,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 /* Screen map: highlight hidden/protected */
 .field-hidden { color: var(--alert); font-weight: bold; }
 .field-input { color: var(--text); }
+.field-label { color: var(--dim); }
 
 /* Toast notifications */
 .toast-container { position: fixed; top: 8px; right: 8px; z-index: 10000; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }
@@ -1511,6 +1512,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
     <div class="panel-header" onclick="togglePanel('panel-screen')">
       <span class="panel-title">Screen Map</span>
       <button class="btn" onclick="event.stopPropagation();loadScreenMap()" style="margin-left:auto;font-size:15px;padding:2px 8px">REFRESH</button>
+      <button class="btn" id="smap-filter-btn" onclick="event.stopPropagation();toggleSmapFilter()" style="font-size:15px;padding:2px 8px;margin-left:6px">SHOW ALL</button>
       <button class="btn" id="fuzz-btn" onclick="event.stopPropagation();openFuzzConfig()" style="display:none;font-size:15px;padding:2px 8px;margin-left:6px">FUZZ (0)</button>
     </div>
     <div class="panel-body">
@@ -1540,7 +1542,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
         </div>
       </div>
       <table><thead><tr>
-        <th>Pos</th><th>Type</th><th>P</th><th>H</th><th>N</th><th>Len</th><th>Content</th>
+        <th>Pos</th><th>Role</th><th>H</th><th>N</th><th>Len</th><th>Content</th>
       </tr></thead><tbody id="smap-table"></tbody></table>
     </div>
   </div>
@@ -2133,26 +2135,43 @@ async function loadAbends() {
 
 let selectedFuzzFields = [];
 let fuzzPoller = null;
+let smapShowAll = false;
+let smapData = [];
 
 async function loadScreenMap() {
   try {
-    const data = await api('/api/screen_map');
-    const tbody = document.getElementById('smap-table');
-    tbody.innerHTML = '';
-    selectedFuzzFields = [];
-    data.forEach((f, i) => {
-      const tr = document.createElement('tr');
-      if (f.hidden) tr.className = 'field-hidden';
-      else if (!f.protected) tr.className = 'field-input';
-      if (!f.protected) {
-        tr.style.cursor = 'pointer';
-        tr.onclick = () => toggleFuzzField(tr, f);
-      }
-      tr.innerHTML = '<td>'+f.row+','+f.col+'</td><td>'+esc(f.type)+'</td><td>'+(f.protected?'Y':'')+'</td><td>'+(f.hidden?'Y':'')+'</td><td>'+(f.numeric?'Y':'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
-      tbody.appendChild(tr);
-    });
-    updateFuzzButton();
+    smapData = await api('/api/screen_map');
+    renderScreenMap();
   } catch(e) {}
+}
+
+function renderScreenMap() {
+  const tbody = document.getElementById('smap-table');
+  tbody.innerHTML = '';
+  selectedFuzzFields = [];
+  smapData.forEach((f, i) => {
+    const isInput = !f.protected;
+    const isHidden = f.hidden;
+    if (!smapShowAll && !isInput && !isHidden) return;
+    const tr = document.createElement('tr');
+    if (isHidden) tr.className = 'field-hidden';
+    else if (isInput) tr.className = 'field-input';
+    else tr.className = 'field-label';
+    if (isInput) {
+      tr.style.cursor = 'pointer';
+      tr.onclick = () => toggleFuzzField(tr, f);
+    }
+    const role = isInput ? 'input' : (isHidden ? 'hidden' : 'label');
+    tr.innerHTML = '<td>'+f.row+','+f.col+'</td><td>'+role+'</td><td>'+(f.hidden?'Y':'')+'</td><td>'+(f.numeric?'Y':'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
+    tbody.appendChild(tr);
+  });
+  updateFuzzButton();
+}
+
+function toggleSmapFilter() {
+  smapShowAll = !smapShowAll;
+  document.getElementById('smap-filter-btn').textContent = smapShowAll ? 'FILTER' : 'SHOW ALL';
+  renderScreenMap();
 }
 
 function toggleFuzzField(tr, field) {
