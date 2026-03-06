@@ -903,13 +903,14 @@ class Gr0gu3270State:
                     'similarity': row[5],
                     'response_preview': row[6],
                     'response_len': row[7],
+                    'replay_ok': bool(row[8]) if len(row) > 8 else True,
                 })
             return results
 
     def get_aid_scan_summary(self):
         with self.lock:
             results = self.h.aid_scan_results
-            summary = {'VIOLATION': [], 'NEW_SCREEN': [], 'SAME_SCREEN': [], 'TIMEOUT': []}
+            summary = {'VIOLATION': [], 'NEW_SCREEN': [], 'SAME_SCREEN': [], 'TIMEOUT': [], 'SKIPPED': []}
             for r in results:
                 cat = r.get('category', 'TIMEOUT')
                 if cat in summary:
@@ -922,7 +923,7 @@ class Gr0gu3270State:
                 'total': len(self.h.aid_scan_keys),
                 'summary': {k: len(v) for k, v in summary.items()},
                 'results': sorted(results,
-                    key=lambda r: {'VIOLATION': 0, 'NEW_SCREEN': 1, 'TIMEOUT': 2, 'SAME_SCREEN': 3}.get(r.get('category', ''), 4))
+                    key=lambda r: {'VIOLATION': 0, 'NEW_SCREEN': 1, 'TIMEOUT': 2, 'SAME_SCREEN': 3, 'SKIPPED': 4}.get(r.get('category', ''), 5))
             }
 
     def run_daemon(self):
@@ -1983,9 +1984,10 @@ function buildActionPanels() {
       <span style="color:var(--head)"><b id="as-new">0</b> NEW SCREEN</span>
       <span style="color:var(--dim)"><b id="as-same">0</b> SAME</span>
       <span style="color:var(--dim)"><b id="as-timeout">0</b> TIMEOUT</span>
+      <span style="color:var(--dim)"><b id="as-skipped">0</b> SKIPPED</span>
     </div>
     <table style="margin-top:4px"><thead><tr>
-      <th>Key</th><th>Category</th><th>Status</th><th>Similarity</th><th>Preview</th>
+      <th style="text-align:center">R</th><th>Key</th><th>Category</th><th>Status</th><th>Similarity</th><th>Preview</th>
     </tr></thead><tbody id="aid-scan-table"></tbody></table>`;
 
   // SPOOL/RCE
@@ -2446,8 +2448,8 @@ async function aidScanStop() {
   document.getElementById('aid-scan-stop-btn').style.display = 'none';
   document.getElementById('aid-scan-progress').textContent = 'Stopped';
 }
-const CAT_COLORS = {VIOLATION:C.alert,NEW_SCREEN:C.text,SAME_SCREEN:C.dim,TIMEOUT:C.dim};
-const CAT_ORDER = {VIOLATION:0,NEW_SCREEN:1,TIMEOUT:2,SAME_SCREEN:3};
+const CAT_COLORS = {VIOLATION:C.alert,NEW_SCREEN:C.text,SAME_SCREEN:C.dim,TIMEOUT:C.dim,SKIPPED:C.dim};
+const CAT_ORDER = {VIOLATION:0,NEW_SCREEN:1,TIMEOUT:2,SAME_SCREEN:3,SKIPPED:4};
 async function aidScanPoll() {
   const r = await fetch('/api/aid_scan/summary').then(r=>r.json());
   const s = r.summary || {};
@@ -2455,13 +2457,16 @@ async function aidScanPoll() {
   document.getElementById('as-new').textContent = s.NEW_SCREEN||0;
   document.getElementById('as-same').textContent = s.SAME_SCREEN||0;
   document.getElementById('as-timeout').textContent = s.TIMEOUT||0;
+  document.getElementById('as-skipped').textContent = s.SKIPPED||0;
   document.getElementById('aid-scan-progress').textContent = r.progress+'/'+r.total;
   const tb = document.getElementById('aid-scan-table');
   tb.innerHTML = '';
   (r.results||[]).forEach(row => {
     const c = CAT_COLORS[row.category]||C.dim;
+    const rdot = row.replay_ok===false ? 'var(--alert)' : 'var(--text)';
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td>'+row.aid_key+'</td>'+
+    tr.innerHTML = '<td style="text-align:center"><span style="display:block;margin:auto;width:8px;height:8px;border-radius:50%;background:'+rdot+'"></span></td>'+
+      '<td>'+row.aid_key+'</td>'+
       '<td style="color:'+c+';font-weight:bold">'+row.category+'</td>'+
       '<td>'+row.status+'</td>'+
       '<td>'+(row.similarity*100).toFixed(0)+'%</td>'+

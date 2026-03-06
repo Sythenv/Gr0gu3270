@@ -507,7 +507,8 @@ class Gr0gu3270:
                             STATUS TEXT,
                             SIMILARITY REAL,
                             RESPONSE_PREVIEW TEXT,
-                            RESPONSE_LEN INTEGER)
+                            RESPONSE_LEN INTEGER,
+                            REPLAY_OK INTEGER DEFAULT 1)
                             """)
             self.sql_con.commit()
 
@@ -1698,25 +1699,60 @@ class Gr0gu3270:
             self.write_database_log('S', 'AID scan response: {} -> {}'.format(
                 aid_name, category), server_data)
 
+        # Replay path to return to target screen + verify
+        replay_ok = False
+        for attempt in range(2):
+            replay_response = self.aid_scan_replay()
+            if replay_response:
+                self.client.send(replay_response)
+                sim = self.screen_similarity(replay_response, self.aid_scan_ref_screen)
+                if sim > 0.8:
+                    replay_ok = True
+                    break
+                self.logger.debug("AID scan: replay attempt {} for {} — similarity {:.0%}".format(
+                    attempt + 1, aid_name, sim))
+            else:
+                self.logger.debug("AID scan: replay attempt {} for {} — no response".format(
+                    attempt + 1, aid_name))
+
+        result['replay_ok'] = replay_ok
         self.aid_scan_results.append(result)
         self.write_aid_scan_log(result)
         self.aid_scan_index += 1
 
-        # Replay path to return to target screen
-        replay_response = self.aid_scan_replay()
-        if replay_response:
-            self.client.send(replay_response)
+        self.logger.debug("AID scan: {} -> {} (replay: {})".format(
+            aid_name, result['category'], 'OK' if replay_ok else 'FAIL'))
 
-        self.logger.debug("AID scan: {} -> {}".format(aid_name, result['category']))
+        # Stop-on-fail: mark remaining keys as SKIPPED
+        if not replay_ok:
+            self.logger.debug("AID scan: replay failed for {} — skipping {} remaining keys".format(
+                aid_name, len(self.aid_scan_keys) - self.aid_scan_index))
+            while self.aid_scan_index < len(self.aid_scan_keys):
+                skipped = {
+                    'aid_key': self.aid_scan_keys[self.aid_scan_index],
+                    'category': 'SKIPPED',
+                    'status': 'SKIPPED',
+                    'similarity': 0.0,
+                    'response_preview': 'Skipped — replay failed after {}'.format(aid_name),
+                    'response_len': 0,
+                    'timestamp': time.time(),
+                    'replay_ok': False,
+                }
+                self.aid_scan_results.append(skipped)
+                self.write_aid_scan_log(skipped)
+                self.aid_scan_index += 1
+            self.aid_scan_running = False
+            return result
+
         return result
 
     def write_aid_scan_log(self, result):
         '''Writes an AID scan result to the database.'''
         self.sql_cur.execute(
-            "INSERT INTO AidScan ('TIMESTAMP', 'AID_KEY', 'CATEGORY', 'STATUS', 'SIMILARITY', 'RESPONSE_PREVIEW', 'RESPONSE_LEN') VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO AidScan ('TIMESTAMP', 'AID_KEY', 'CATEGORY', 'STATUS', 'SIMILARITY', 'RESPONSE_PREVIEW', 'RESPONSE_LEN', 'REPLAY_OK') VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (str(result['timestamp']), result['aid_key'], result['category'],
              result['status'], result['similarity'], result['response_preview'],
-             result['response_len'])
+             result['response_len'], 1 if result.get('replay_ok', True) else 0)
         )
         self.sql_con.commit()
 
