@@ -131,14 +131,16 @@ def test_set_hack_color(state):
     assert s['hack_color_on'] is True
 
 def test_toggle_abend_detection(state):
-    r = state.toggle_abend_detection()
-    assert r['on'] is True
+    # Enabled by default
     r = state.toggle_abend_detection()
     assert r['on'] is False
+    r = state.toggle_abend_detection()
+    assert r['on'] is True
 
 def test_toggle_transaction_tracking(state):
+    # Enabled by default
     r = state.toggle_transaction_tracking()
-    assert r['on'] is True
+    assert r['on'] is False
 
 def test_inject_reset(state):
     r = state.inject_reset()

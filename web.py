@@ -1314,8 +1314,8 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
       <div class="toggles">
         <div class="toggle-pill" id="tgl-hack" onclick="toggleHackFields()" title="Hack Fields">H</div>
         <div class="toggle-pill" id="tgl-color" onclick="toggleHackColor()" title="Hack Color">C</div>
-        <div class="toggle-pill" id="tgl-abend" onclick="toggleAbend()" title="ABEND Detection">A</div>
-        <div class="toggle-pill" id="tgl-txn" onclick="toggleTxnTracking()" title="Transaction Tracking">T</div>
+        <div class="toggle-pill on" id="tgl-abend" style="display:none">A</div>
+        <div class="toggle-pill on" id="tgl-txn" style="display:none">T</div>
       </div>
     </div>
   </div>

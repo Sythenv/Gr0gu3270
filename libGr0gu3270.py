@@ -202,7 +202,7 @@ class Gr0gu3270:
         self.found_aids = [] # for keeping track of AIDs found on screen
 
         # ABEND Detection (PR1)
-        self.abend_detection = False
+        self.abend_detection = True
         self.abend_history = []
         self.abend_count = 0
 
@@ -210,7 +210,7 @@ class Gr0gu3270:
         self.current_screen_map = []
 
         # Transaction Correlation (PR3)
-        self.transaction_tracking = False
+        self.transaction_tracking = True
         self.pending_transaction = None
         self.transaction_history = []
 
