@@ -1,4 +1,4 @@
-# Journal de Recherche — hack3270 / Pentest CICS
+# Journal de Recherche — Gr0gu3270 / Pentest CICS
 
 ## Convention
 ```
@@ -6,7 +6,7 @@ YYYY-MM-DD HH:MM : [CATEG] Observation + fait
 ```
 
 Categories :
-- `[TOOL]` — evolution de hack3270
+- `[TOOL]` — evolution de Gr0gu3270
 - `[CICS]` — connaissance CICS / mainframe
 - `[SECU]` — finding securite / technique d'attaque
 - `[ARCHI]` — decision architecture / design
@@ -18,7 +18,7 @@ Categories :
 
 ## 2026-03-04
 
-2026-03-04 00:01 : [TOOL] Implementation des 4 features CICS audit : PR1 ABEND Detection (20 codes + DFH prefixes), PR2 Screen Map BMS (SBA/SF/SFE decode), PR3 Transaction Correlation (detect txn code + timing), PR4 Security Audit (25 violation patterns RACF/ACF2/TSS, classify_response). ~600 LOC dans libhack3270.py + tk.py.
+2026-03-04 00:01 : [TOOL] Implementation des 4 features CICS audit : PR1 ABEND Detection (20 codes + DFH prefixes), PR2 Screen Map BMS (SBA/SF/SFE decode), PR3 Transaction Correlation (detect txn code + timing), PR4 Security Audit (25 violation patterns RACF/ACF2/TSS, classify_response). ~600 LOC dans libGr0gu3270.py + tk.py.
 
 2026-03-04 00:03 : [CICS] Les ABENDs CICS sont codes sur 4 caracteres. ASRA = program check (equivalent segfault), AEY7 = not authorized, APCT = program not found. Un ASRA lors d'injection = le programme ne valide pas ses inputs = vuln confirmee.
 
@@ -40,7 +40,7 @@ Categories :
 
 ## 2026-03-05
 
-2026-03-05 10:50 : [EXP] Premiere session de test DVCA (mainframed767/dvca sur Docker, port 3270). hack3270 lance en mode web (--web-port 1337) avec x3270 connecte au proxy port 3271.
+2026-03-05 10:50 : [EXP] Premiere session de test DVCA (mainframed767/dvca sur Docker, port 3270). Gr0gu3270 lance en mode web (--web-port 1337) avec x3270 connecte au proxy port 3271.
 
 2026-03-05 10:51 : [TOOL] Bug decouvert : list_injection_files() utilise Path('injections') relatif — si le process est lance depuis un autre repertoire, les fichiers ne sont pas trouves. Corrige en relancant depuis le bon CWD.
 
@@ -58,7 +58,7 @@ Categories :
 
 2026-03-05 11:10 : [CICS] DVCA login : LOGON DVCA/DVCA au prompt TSO, lance automatiquement KICKS (CICS-compatible). Puis CSGM pour l'ecran DVCA, PF5 pour le menu principal MCGM. Transaction MCGM = "Mels Cargo Main Menu".
 
-2026-03-05 11:15 : [EXP] Hidden fields trouves dans MCGM : 4 champs avec attribut hidden, dont "99) Delete Order History" — option admin dissimilee. hack3270 avec hack_on expose correctement ces champs dans le screen map et dans x3270. Finding F-0004.
+2026-03-05 11:15 : [EXP] Hidden fields trouves dans MCGM : 4 champs avec attribut hidden, dont "99) Delete Order History" — option admin dissimilee. Gr0gu3270 avec hack_on expose correctement ces champs dans le screen map et dans x3270. Finding F-0004.
 
 2026-03-05 11:15 : [EXP] Protected fields : hack_on avec prot=1 supprime les bits de protection. Tous les champs PROT deviennent editables dans x3270. Le proxy manipulate() fonctionne correctement sur les ecrans DVCA. Finding F-0005.
 
@@ -88,7 +88,7 @@ Categories :
 
 2026-03-05 18:00 : [SECU] Technique RCE CICS via CECI SPOOLWRITE → INTRDR. Prereqs : CECI accessible + SPOOL=YES dans SIT + autorisations SURROGAT. Non applicable sur KICKS/DVCA (pas d'API SPOOL). PoC = FTP connect vers listener (safe, pas d'exec code).
 
-2026-03-05 18:00 : [ARCHI] 6 nouvelles methodes libhack3270 (build_ceci_payload, _spool_send_and_read, spool_check, spool_poc_ftp). 2 endpoints web (/api/spool/check, /api/spool/poc). UI web + Tkinter. 13 nouveaux tests → 95 total.
+2026-03-05 18:00 : [ARCHI] 6 nouvelles methodes libGr0gu3270 (build_ceci_payload, _spool_send_and_read, spool_check, spool_poc_ftp). 2 endpoints web (/api/spool/check, /api/spool/poc). UI web + Tkinter. 13 nouveaux tests → 95 total.
 
 ## 2026-03-05 — AID Scan + Post-mortem session Claude Code
 

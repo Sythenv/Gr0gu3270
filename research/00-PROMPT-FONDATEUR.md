@@ -15,10 +15,10 @@ Ce prompt unique a produit : ~600 lignes de code Python, 4 features fonctionnell
 
 > Implement the following plan:
 >
-> # Plan : 4 Features CICS Audit pour hack3270
+> # Plan : 4 Features CICS Audit pour Gr0gu3270
 >
 > ## Contexte
-> hack3270 opere au niveau protocole TN3270 brut. Pour un audit CICS efficace,
+> Gr0gu3270 opere au niveau protocole TN3270 brut. Pour un audit CICS efficace,
 > il manque la comprehension semantique des ecrans, le suivi des transactions,
 > la detection d'erreurs, et le test automatise de securite.
 > Chaque feature = 1 PR sur une branche dediee.

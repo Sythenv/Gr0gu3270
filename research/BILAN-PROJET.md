@@ -1,4 +1,4 @@
-# Bilan de projet — hack3270 + coding agent
+# Bilan de projet — Gr0gu3270 + coding agent
 
 **Date** : 2026-03-05
 **Auteur** : analyse generee par coding agent, supervisee par l'operateur
@@ -10,7 +10,7 @@
 
 ### L'etat initial : 3 ans, 2253 lignes, un outil fonctionnel mais manuel
 
-hack3270 existait depuis fevrier 2023. 70 commits sur 3 ans. Un proxy MitM TN3270 fonctionnel avec :
+Gr0gu3270 existait depuis fevrier 2023. 70 commits sur 3 ans. Un proxy MitM TN3270 fonctionnel avec :
 - Interception et modification du flux 3270
 - Injection de payloads depuis des wordlists
 - Hack fields (hidden, protected, numeric)
@@ -105,7 +105,7 @@ Les capacites ont ete validees sur DVCA (Damn Vulnerable CICS Application) :
 
 **3. L'echec a ete transforme en livrable.** La boucle x3270 (32 appels, ~4.70 EUR) aurait ete du gaspillage pur. L'instruction "Documente ton comportement" a transforme cet echec en post-mortem reutilisable, en best practices, et en contenu pour les stakeholders. C'est de la conduite de projet : rien ne se perd si on sait recycler.
 
-**4. Le double objectif etait declare des le depart.** Le CLAUDE.md et le prompt fondateur mentionnent explicitement les deux objectifs : (1) faire evoluer hack3270, (2) demontrer l'impact des coding agents. La documentation n'est pas du scope creep — c'est un livrable prevu. Les analogies multi-public, le post-mortem, les guidelines de securite sont de la production intentionnelle, pas de la derive.
+**4. Le double objectif etait declare des le depart.** Le CLAUDE.md et le prompt fondateur mentionnent explicitement les deux objectifs : (1) faire evoluer Gr0gu3270, (2) demontrer l'impact des coding agents. La documentation n'est pas du scope creep — c'est un livrable prevu. Les analogies multi-public, le post-mortem, les guidelines de securite sont de la production intentionnelle, pas de la derive.
 
 ### Ce qui merite attention
 
@@ -117,7 +117,7 @@ Recommandation : 1 feature = 1 commit. Le commit est le point de sauvegarde ET l
 
 Recommandation : la mise a jour du CLAUDE.md fait partie du commit, pas d'une tache separee. Si le commit ajoute l'AID scan, le CLAUDE.md du meme commit mentionne l'AID scan.
 
-**3. Fichiers orphelins.** `test_aid_scan_live.py` (250 lignes, credentials DVCA/DVCA en dur) est dans la racine, pas dans `tests/`. `hack3270_stderr.log` est vide. `research/POSTMORTEM-CLAUDE-CODE.md` n'est pas tracke. Ce sont des artefacts de session qui s'accumulent.
+**3. Fichiers orphelins.** `test_aid_scan_live.py` (250 lignes, credentials DVCA/DVCA en dur) est dans la racine, pas dans `tests/`. `Gr0gu3270_stderr.log` est vide. `research/POSTMORTEM-CLAUDE-CODE.md` n'est pas tracke. Ce sont des artefacts de session qui s'accumulent.
 
 Recommandation : `git status` avant de passer a la feature suivante. Les fichiers orphelins sont du bruit.
 

@@ -1,13 +1,13 @@
-# Grille d'analogies multi-public — hack3270
+# Grille d'analogies multi-public — Gr0gu3270
 
-Ce document traduit les concepts techniques de hack3270 pour chaque public cible du projet.
+Ce document traduit les concepts techniques de Gr0gu3270 pour chaque public cible du projet.
 
 ## Public cible et analogies metier
 
-| Public | Ce qu'ils connaissent | Analogie hack3270 |
+| Public | Ce qu'ils connaissent | Analogie Gr0gu3270 |
 |--------|----------------------|---------------------|
-| **DG / DGA** | Risque business, conformite, ROI | hack3270 = audit de controle interne automatise. Chaque transaction CICS testee = un controle verifie. Le rapport d'audit = matrice de risques. Un ABEND detecte = un incident potentiel quantifiable. |
-| **Ingenieur Cyber** | Burp Suite, Nmap, OWASP, CVE | hack3270 = Burp Suite pour mainframe. ABEND detection = crash monitor. Screen Map = DevTools. Security Audit = scanner de vulns. Transaction correlation = historique HTTP. |
+| **DG / DGA** | Risque business, conformite, ROI | Gr0gu3270 = audit de controle interne automatise. Chaque transaction CICS testee = un controle verifie. Le rapport d'audit = matrice de risques. Un ABEND detecte = un incident potentiel quantifiable. |
+| **Ingenieur Cyber** | Burp Suite, Nmap, OWASP, CVE | Gr0gu3270 = Burp Suite pour mainframe. ABEND detection = crash monitor. Screen Map = DevTools. Security Audit = scanner de vulns. Transaction correlation = historique HTTP. |
 | **Juridique offensif** (pentest legal) | Cadre d'autorisation, scope, preuves | Chaque action est journalisee en SQLite avec horodatage = tracabilite complete. Le mode audit genere des preuves reproductibles. L'export CSV = piece justificative pour le rapport de mission. |
 | **Juridique defensif** (conformite, RSSI) | Normes (ISO 27001, PCI-DSS), controles, remediation | L'audit PR4 = controle d'acces conforme au principe du moindre privilege. Un finding ACCESSIBLE sur une transaction sensible = non-conformite documentee. Le diff multi-profils = preuve de segregation des droits. |
 
@@ -23,7 +23,7 @@ Ce document traduit les concepts techniques de hack3270 pour chaque public cible
 
 Ce repository sert un **double objectif** :
 
-1. **Faire evoluer hack3270** en outil d'audit CICS complet (pentest mainframe)
+1. **Faire evoluer Gr0gu3270** en outil d'audit CICS complet (pentest mainframe)
 2. **Demontrer l'impact des coding agents** (coding agent) sur le quotidien des professionnels cyber, direction et juridique
 
 ### Document fondateur
@@ -47,7 +47,7 @@ Imaginez que vous confiez un audit de controle interne a un cabinet. En deux jou
 
 ### Ingenieur Cyber
 
-On a pris hack3270 (le Burp Suite du mainframe), ajoute un crash monitor (ABEND detection), un DevTools (Screen Map), un scanner de vulns (Security Audit) et un fuzzer de touches AID — le tout en ~2500 LOC Python, zero dependance, 124 tests. En 2 jours. Sur DVCA, ca trouve 4/7 vulns NetSPI automatiquement, plus un RCE theorique via SPOOL/INTRDR. L'AID scan teste 28 touches et revient a l'ecran tout seul — sauf quand PF3 fait un LOGOFF CICS qui tue la session. C'est exactement comme un Burp Intruder qui replay un token CSRF expire : l'automatisation marche tant que l'etat de session tient, apres c'est a toi de re-authentifier et relancer. Cote agent IA : Claude a code tout ca proprement, mais quand il a fallu connecter x3270 a un proxy, il a brute-force 32 fois une approche cassee au lieu d'ecrire un client raw socket en 3 minutes. La regle des 3 : si ton outil echoue 3 fois pareil, tu changes d'approche — ca vaut pour l'IA comme pour un scanner de vuln.
+On a pris Gr0gu3270 (le Burp Suite du mainframe), ajoute un crash monitor (ABEND detection), un DevTools (Screen Map), un scanner de vulns (Security Audit) et un fuzzer de touches AID — le tout en ~2500 LOC Python, zero dependance, 124 tests. En 2 jours. Sur DVCA, ca trouve 4/7 vulns NetSPI automatiquement, plus un RCE theorique via SPOOL/INTRDR. L'AID scan teste 28 touches et revient a l'ecran tout seul — sauf quand PF3 fait un LOGOFF CICS qui tue la session. C'est exactement comme un Burp Intruder qui replay un token CSRF expire : l'automatisation marche tant que l'etat de session tient, apres c'est a toi de re-authentifier et relancer. Cote agent IA : Claude a code tout ca proprement, mais quand il a fallu connecter x3270 a un proxy, il a brute-force 32 fois une approche cassee au lieu d'ecrire un client raw socket en 3 minutes. La regle des 3 : si ton outil echoue 3 fois pareil, tu changes d'approche — ca vaut pour l'IA comme pour un scanner de vuln.
 
 ### Consultant en droit
 

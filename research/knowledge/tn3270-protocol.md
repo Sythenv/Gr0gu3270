@@ -49,6 +49,6 @@
 
 ## Pertinence pentest
 
-- Les champs hidden (bits 3-2 = 11) sont la cible principale de hack3270
+- Les champs hidden (bits 3-2 = 11) sont la cible principale de Gr0gu3270
 - L'injection se fait en remplacant les donnees entre le preamble et postamble du flux client
 - Le parsing screen map (PR2) decode tous les orders pour cartographier les champs

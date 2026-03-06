@@ -26,17 +26,17 @@
 
 ## PROJET
 
-hack3270 — TN3270 penetration testing toolkit (v1.2.5-2, GPL-3.0). Proxy MitM entre emulateur TN3270 et mainframe pour audit CICS.
+Gr0gu3270 — TN3270 penetration testing toolkit (v1.2.5-2, GPL-3.0). Proxy MitM entre emulateur TN3270 et mainframe pour audit CICS.
 
 ### Execution
 
 ```bash
-python3 hack3270.py <IP> <PORT>                        # standard (web UI par defaut)
-python3 hack3270.py -n myproject 10.10.10.10 3270      # project name
-python3 hack3270.py -t 10.10.10.10 3270                # TLS
-python3 hack3270.py --ui tk 10.10.10.10 3270           # Tkinter UI
-python3 hack3270.py --web-port 1337 10.10.10.10 3270   # web port custom
-python3 hack3270.py -o                                 # offline (analyse depuis DB)
+python3 Gr0gu3270.py <IP> <PORT>                        # standard (web UI par defaut)
+python3 Gr0gu3270.py -n myproject 10.10.10.10 3270      # project name
+python3 Gr0gu3270.py -t 10.10.10.10 3270                # TLS
+python3 Gr0gu3270.py --ui tk 10.10.10.10 3270           # Tkinter UI
+python3 Gr0gu3270.py --web-port 1337 10.10.10.10 3270   # web port custom
+python3 Gr0gu3270.py -o                                 # offline (analyse depuis DB)
 python3 -m pytest tests/ -v                            # tests unitaires (124 tests)
 ```
 
@@ -44,15 +44,15 @@ Python 3.11+ avec tkinter. Zero dependance externe.
 
 ### Architecture
 
-- `hack3270.py` — CLI entry point (88 lignes)
-- `libhack3270.py` — Core library (~2700 lignes) : protocole 3270, EBCDIC, injection, ABEND detection, screen map, transactions, security audit, AID scan, SPOOL/RCE, SQLite
+- `Gr0gu3270.py` — CLI entry point (88 lignes)
+- `libGr0gu3270.py` — Core library (~2700 lignes) : protocole 3270, EBCDIC, injection, ABEND detection, screen map, transactions, security audit, AID scan, SPOOL/RCE, SQLite
 - `web.py` — Web UI (~2200 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 36 endpoints API
 - `tk.py` — GUI Tkinter (~1200 lignes), 11 onglets (0-6 originaux, 7 ABEND, 8 Screen Map, 9 Transactions, 10 Security Audit)
 
 ### Data Flow
 
 ```
-TN3270 Emulator <-> Local Proxy (hack3270) <-> TN3270 Server (Mainframe)
+TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
                           |
                     SQLite3 DB (project_name.db)
                           |

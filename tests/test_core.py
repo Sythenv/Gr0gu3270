@@ -1,11 +1,11 @@
 """
-Unit tests for hack3270 core library (PR1-PR4).
+Unit tests for Gr0gu3270 core library (PR1-PR4).
 No network, no GUI — tests pure logic only.
 
 Run: python3 -m pytest tests/ -v
 """
 import pytest
-from libhack3270 import hack3270, e2a
+from libGr0gu3270 import Gr0gu3270, e2a
 
 
 # ---- Helpers: build EBCDIC bytes from ASCII ----
@@ -264,13 +264,13 @@ class TestScanDB:
 class TestSpoolConstants:
     def test_spool_status_codes_exist(self):
         """AUDIT_STATUS includes SPOOL_OPEN and SPOOL_CLOSED."""
-        from libhack3270 import AUDIT_STATUS
+        from libGr0gu3270 import AUDIT_STATUS
         assert 'SPOOL_OPEN' in AUDIT_STATUS
         assert 'SPOOL_CLOSED' in AUDIT_STATUS
 
     def test_spool_patterns_exist(self):
         """SPOOL_SUCCESS_PATTERNS and SPOOL_FAIL_PATTERNS are defined."""
-        from libhack3270 import SPOOL_SUCCESS_PATTERNS, SPOOL_FAIL_PATTERNS
+        from libGr0gu3270 import SPOOL_SUCCESS_PATTERNS, SPOOL_FAIL_PATTERNS
         assert 'NORMAL' in SPOOL_SUCCESS_PATTERNS
         assert 'INVREQ' in SPOOL_FAIL_PATTERNS
         assert 'NOTAUTH' in SPOOL_FAIL_PATTERNS

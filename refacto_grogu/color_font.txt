@@ -1,0 +1,3 @@
+background green: #00969a
+default font green : #006c4d
+red : #ff151f

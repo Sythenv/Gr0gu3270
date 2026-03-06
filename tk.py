@@ -2,15 +2,15 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import filedialog, messagebox
 import tkinter.scrolledtext as tkk
-import libhack3270
+import libGr0gu3270
 import sys, signal, platform, logging, datetime, re, select
 
-class tkhack3270:
-    def __init__(self, master, style, hack3270, logfile=None,loglevel=logging.WARNING):
+class tkGr0gu3270:
+    def __init__(self, master, style, Gr0gu3270, logfile=None,loglevel=logging.WARNING):
 
         self.root = master  # Tk root
         self.style = style  # Tk Style
-        self.hack3270 = hack3270 #Initialized hack3270 object
+        self.Gr0gu3270 = Gr0gu3270 #Initialized Gr0gu3270 object
         self.last_db_id = 0
 
         # Create the Loggers (file and stderr)
@@ -46,27 +46,27 @@ class tkhack3270:
         self.frame = tk.Frame(self.root)
         self.frame.pack(side="top", expand=True, fill="both")
 
-        self.root.title("{} v{}".format(libhack3270.__name__ ,libhack3270.__version__))
+        self.root.title("{} v{}".format(libGr0gu3270.__name__ ,libGr0gu3270.__version__))
 
         self.darwin_resize()
 
         self.initial_window()
 
-        if self.hack3270.is_offline():
+        if self.Gr0gu3270.is_offline():
             status = tk.Label(self.frame, text="OFFLINE LOG ANALYSIS MODE", bg='light grey').pack()
         else:
-            self.hack3270.server_connect()
+            self.Gr0gu3270.server_connect()
 
 
-        if self.hack3270.is_offline():
+        if self.Gr0gu3270.is_offline():
             self.logger.debug("Offline mode enabled.")
             self.offline_init()
         else:
-            self.hack3270.check_inject_3270e()
+            self.Gr0gu3270.check_inject_3270e()
 
         self.tabs_init()
 
-        if self.hack3270.is_offline():
+        if self.Gr0gu3270.is_offline():
             self.tabControl.tab(0, state="disabled")
             self.tabControl.tab(1, state="disabled")
             self.tabControl.tab(2, state="disabled")
@@ -82,12 +82,12 @@ class tkhack3270:
 
     def run_it(self):
 
-        if self.hack3270.is_offline():
+        if self.Gr0gu3270.is_offline():
             self.lastTab = self.tabNum
             self.root.update()
             return
 
-        self.hack3270.daemon()
+        self.Gr0gu3270.daemon()
         if self.tabNum == 2: # Inject Keys
             self.aid_refresh()
         self.lastTab = self.tabNum
@@ -326,12 +326,12 @@ class tkhack3270:
 
     def statistic_tab(self):
         self.logger.debug("Setting up Statistics tab")
-        ip_label = tk.Label(self.tab6, text = 'Server IP Address: {}'.format(self.hack3270.get_ip_port()[0]),  font="TkDefaultFont 14", bg='light grey')
+        ip_label = tk.Label(self.tab6, text = 'Server IP Address: {}'.format(self.Gr0gu3270.get_ip_port()[0]),  font="TkDefaultFont 14", bg='light grey')
         ip_label.place(x=25, y=20)
-        port_label = tk.Label(self.tab6, text = 'Server TCP Port: {}'.format(self.hack3270.get_ip_port()[1]), font="TkDefaultFont 14", bg='light grey')
+        port_label = tk.Label(self.tab6, text = 'Server TCP Port: {}'.format(self.Gr0gu3270.get_ip_port()[1]), font="TkDefaultFont 14", bg='light grey')
         port_label.place(x=25, y=40)
 
-        port_label = tk.Label(self.tab6, text = 'TLS Enabled: {}'.format(self.hack3270.get_tls()), font="TkDefaultFont 14", bg='light grey')
+        port_label = tk.Label(self.tab6, text = 'TLS Enabled: {}'.format(self.Gr0gu3270.get_tls()), font="TkDefaultFont 14", bg='light grey')
         port_label.place(x=25, y=60)
         
         total_connections = 0
@@ -346,7 +346,7 @@ class tkhack3270:
         client_bytes = 0
 
 
-        for record in self.hack3270.all_logs():
+        for record in self.Gr0gu3270.all_logs():
             curr_timestamp = float(record[1])
             if record[2] == 'C':
                 client_messages += 1
@@ -394,33 +394,33 @@ class tkhack3270:
         e1.config(state = "disabled")
 
     def update_logs_tab(self):
-        for row in self.hack3270.all_logs(self.last_db_id):
-            self.treev.insert('', 'end',text="",values=(row[0], datetime.datetime.fromtimestamp(float(row[1])), self.hack3270.expand_CS(row[2]), row[4], row[3]))
+        for row in self.Gr0gu3270.all_logs(self.last_db_id):
+            self.treev.insert('', 'end',text="",values=(row[0], datetime.datetime.fromtimestamp(float(row[1])), self.Gr0gu3270.expand_CS(row[2]), row[4], row[3]))
             self.last_db_id = int(row[0])
 
     def offline_init(self):
             my_record_num = 1
-            while self.hack3270.check_record(my_record_num):
-                if self.hack3270.check_server(my_record_num):
+            while self.Gr0gu3270.check_record(my_record_num):
+                if self.Gr0gu3270.check_server(my_record_num):
                     self.logger.debug("Playing server message: " + str(my_record_num))
-                    self.hack3270.play_record(my_record_num)
+                    self.Gr0gu3270.play_record(my_record_num)
                 else:
                     self.logger.debug("Waiting for message from client.")
-                    self.hack3270.recv()
+                    self.Gr0gu3270.recv()
                 my_record_num = my_record_num + 1
             self.logger.debug("Telnet negotiation complete.")
             self.logger.debug("Displaying splash screen.")
-            while self.hack3270.check_server(my_record_num):
+            while self.Gr0gu3270.check_server(my_record_num):
                 self.logger.debug("Playing server message: " + str(my_record_num))
-                self.hack3270.play_record(my_record_num)
+                self.Gr0gu3270.play_record(my_record_num)
                 my_record_num = my_record_num + 1
 
     def initial_window(self):
-        ip, port = self.hack3270.get_proxy_ip_port()
+        ip, port = self.Gr0gu3270.get_proxy_ip_port()
         status = tk.Label(self.frame, text = "Waiting for TN3270 connection on  {}:{}".format(ip,port))
         status.pack()
         self.frame.update()
-        self.hack3270.client_connect()
+        self.Gr0gu3270.client_connect()
         status = tk.Label(self.frame, text = "Connection received.")
         status.pack()
         self.frame.update()
@@ -451,7 +451,7 @@ class tkhack3270:
     def on_closing(self):
 
         self.root.protocol("WM_DELETE_WINDOW")
-        self.hack3270.on_closing()
+        self.Gr0gu3270.on_closing()
         self.tabControl.tab(0, state="disabled")
         self.tabControl.tab(1, state="disabled")
         self.tabControl.tab(3, state="disabled")
@@ -463,7 +463,7 @@ class tkhack3270:
 
     def sigint_handler(self, signum, frame):
         self.logger.debug("Shutting Down")
-        self.hack3270.on_closing()
+        self.Gr0gu3270.on_closing()
         self.tabControl.tab(0, state="disabled")
         self.tabControl.tab(1, state="disabled")
         self.tabControl.tab(3, state="disabled")
@@ -475,56 +475,56 @@ class tkhack3270:
     def hack_button_pressed(self):
 
         self.set_checkbox_values()
-        if self.hack3270.get_hack_on():
-            self.hack3270.set_hack_on(0)
+        if self.Gr0gu3270.get_hack_on():
+            self.Gr0gu3270.set_hack_on(0)
             self.hack_button["text"] = 'OFF'
             self.root.update()
-            self.hack3270.set_hack_toggled()
+            self.Gr0gu3270.set_hack_toggled()
         else:
-            self.hack3270.set_hack_on(1)
+            self.Gr0gu3270.set_hack_on(1)
             self.hack_button["text"] = 'ON'
             self.root.update()
-            self.hack3270.set_hack_toggled()
+            self.Gr0gu3270.set_hack_toggled()
         return
 
     def hack_color_button_pressed(self):
         self.set_checkbox_values()
 
-        if self.hack3270.get_hack_color_on():
-            self.hack3270.set_hack_color_on(0)
+        if self.Gr0gu3270.get_hack_color_on():
+            self.Gr0gu3270.set_hack_color_on(0)
             self.hack_color_button["text"] = 'OFF'
             self.root.update()
-            self.hack3270.set_hack_color_toggled()
+            self.Gr0gu3270.set_hack_color_toggled()
         else:
-            self.hack3270.set_hack_color_on(1)
+            self.Gr0gu3270.set_hack_color_on(1)
             self.hack_color_button["text"] = 'ON'
             self.root.update()
-            self.hack3270.set_hack_color_toggled()
+            self.Gr0gu3270.set_hack_color_toggled()
         return
 
     def hack_toggle(self):
         self.set_checkbox_values()
-        self.hack3270.set_hack_toggled(1)
+        self.Gr0gu3270.set_hack_toggled(1)
         return
     
     def hack_color_toggle(self):
         self.set_checkbox_values()
-        self.hack3270.set_hack_color_toggled(1)
+        self.Gr0gu3270.set_hack_color_toggled(1)
         return
 
     def set_checkbox_values(self):
-        self.hack3270.set_hack_prot(self.hack_prot.get())
-        self.hack3270.set_hack_hf(self.hack_hf.get())
-        self.hack3270.set_hack_rnr(self.hack_rnr.get())
-        self.hack3270.set_hack_sf(self.hack_sf.get())
-        self.hack3270.set_hack_sfe(self.hack_sfe.get())
-        self.hack3270.set_hack_mf(self.hack_mf.get())
-        self.hack3270.set_hack_ei(self.hack_ei.get())
-        self.hack3270.set_hack_hv(self.hack_hv.get())
-        self.hack3270.set_hack_color_sfe(self.hack_color_sfe.get())
-        self.hack3270.set_hack_color_mf(self.hack_color_mf.get())
-        self.hack3270.set_hack_color_sa(self.hack_color_sa.get())
-        self.hack3270.set_hack_color_hv(self.hack_color_hv.get())
+        self.Gr0gu3270.set_hack_prot(self.hack_prot.get())
+        self.Gr0gu3270.set_hack_hf(self.hack_hf.get())
+        self.Gr0gu3270.set_hack_rnr(self.hack_rnr.get())
+        self.Gr0gu3270.set_hack_sf(self.hack_sf.get())
+        self.Gr0gu3270.set_hack_sfe(self.hack_sfe.get())
+        self.Gr0gu3270.set_hack_mf(self.hack_mf.get())
+        self.Gr0gu3270.set_hack_ei(self.hack_ei.get())
+        self.Gr0gu3270.set_hack_hv(self.hack_hv.get())
+        self.Gr0gu3270.set_hack_color_sfe(self.hack_color_sfe.get())
+        self.Gr0gu3270.set_hack_color_mf(self.hack_color_mf.get())
+        self.Gr0gu3270.set_hack_color_sa(self.hack_color_sa.get())
+        self.Gr0gu3270.set_hack_color_hv(self.hack_color_hv.get())
         
     
     def browse_files(self):
@@ -541,14 +541,14 @@ class tkhack3270:
     
     def inject_setup(self):
         self.inject_status["text"] = "Submit data using mask character of '{}' to setup injection.".format(self.inject_mask.get())
-        self.hack3270.set_inject_mask(self.inject_mask.get())
+        self.Gr0gu3270.set_inject_mask(self.inject_mask.get())
         self.root.update()
-        self.hack3270.set_inject_setup_capture()
+        self.Gr0gu3270.set_inject_setup_capture()
         return
     
     def inject_go(self):
 
-        if (not self.inject_filename) and (not self.hack3270.get_inject_config_set()):
+        if (not self.inject_filename) and (not self.Gr0gu3270.get_inject_config_set()):
             self.inject_status["text"] = "First select a file for injection, then click SETUP."
             self.root.update()
             return
@@ -559,7 +559,7 @@ class tkhack3270:
             self.root.update()
             return
         
-        if not self.hack3270.get_inject_config_set():
+        if not self.Gr0gu3270.get_inject_config_set():
             self.logger.debug("Field for injection hasn't been setup.")
             self.inject_status["text"] = "Field for injection hasn't been setup.  Click SETUP."
             self.root.update()
@@ -578,23 +578,23 @@ class tkhack3270:
             injection_line = injection_line.rstrip()
 
             if self.inject_trunc.get() == 'TRUNC':
-                injection_line = injection_line[:self.hack3270.get_inject_mask_len()]
+                injection_line = injection_line[:self.Gr0gu3270.get_inject_mask_len()]
 
-            if len(injection_line) <= self.hack3270.get_inject_mask_len():
-                injection_ebcdic = self.hack3270.get_ebcdic(injection_line)
-                bytes_ebcdic = self.hack3270.get_inject_preamble() + injection_ebcdic + self.hack3270.get_inject_postamble()
-                self.hack3270.write_log('C', 'Sending: ' + injection_line, bytes_ebcdic)
-                self.hack3270.send_server(bytes_ebcdic)
+            if len(injection_line) <= self.Gr0gu3270.get_inject_mask_len():
+                injection_ebcdic = self.Gr0gu3270.get_ebcdic(injection_line)
+                bytes_ebcdic = self.Gr0gu3270.get_inject_preamble() + injection_ebcdic + self.Gr0gu3270.get_inject_postamble()
+                self.Gr0gu3270.write_log('C', 'Sending: ' + injection_line, bytes_ebcdic)
+                self.Gr0gu3270.send_server(bytes_ebcdic)
                 self.inject_status["text"] = "Sending: " + injection_line
                 self.root.update()
-                self.hack3270.tend_server()
+                self.Gr0gu3270.tend_server()
             if self.inject_key.get() == 'ENTER+CLEAR':
-                self.hack3270.send_key('CLEAR', b'\x6d')
+                self.Gr0gu3270.send_key('CLEAR', b'\x6d')
             elif self.inject_key.get() == 'ENTER+PF3':
-                self.hack3270.send_key('PF3', b'\xf3')
+                self.Gr0gu3270.send_key('PF3', b'\xf3')
             elif self.inject_key.get() == 'ENTER+PF3+CLEAR':
-                self.hack3270.send_key('PF3', b'\xf3')
-                self.hack3270.send_key('CLEAR', b'\x6d')
+                self.Gr0gu3270.send_key('PF3', b'\xf3')
+                self.Gr0gu3270.send_key('CLEAR', b'\x6d')
 
         injections.close()
         self.enable_tabs()
@@ -618,7 +618,7 @@ class tkhack3270:
             
 
     def inject_reset(self):
-        self.hack3270.set_inject_config_set(0)
+        self.Gr0gu3270.set_inject_config_set(0)
         self.inject_status["text"] = "Configuration cleared."
         self.root.update()
         return
@@ -629,41 +629,41 @@ class tkhack3270:
 
 
         # TODO: Rewrite this function to use a loop
-        if self.aid_no.get(): self.hack3270.send_key('NO', b'\x60')
-        if self.aid_qreply.get(): self.hack3270.send_key('QREPLY', b'\x61')
-        if self.aid_enter.get(): self.hack3270.send_key('ENTER', b'\x7d')
-        if self.aid_pf1.get(): self.hack3270.send_key('PF1', b'\xf1')
-        if self.aid_pf2.get(): self.hack3270.send_key('PF2', b'\xf2')
-        if self.aid_pf3.get(): self.hack3270.send_key('PF3', b'\xf3')
-        if self.aid_pf4.get(): self.hack3270.send_key('PF4', b'\xf4')
-        if self.aid_pf5.get(): self.hack3270.send_key('PF5', b'\xf5')
-        if self.aid_pf6.get(): self.hack3270.send_key('PF6', b'\xf6')
-        if self.aid_pf7.get(): self.hack3270.send_key('PF7', b'\xf7')
-        if self.aid_pf8.get(): self.hack3270.send_key('PF8', b'\xf8')
-        if self.aid_pf9.get(): self.hack3270.send_key('PF9', b'\xf9')
-        if self.aid_pf10.get(): self.hack3270.send_key('PF10', b'\x7a')
-        if self.aid_pf11.get(): self.hack3270.send_key('PF11', b'\x7b')
-        if self.aid_pf12.get(): self.hack3270.send_key('PF12', b'\x7c')
-        if self.aid_pf13.get(): self.hack3270.send_key('PF13', b'\xc1')
-        if self.aid_pf14.get(): self.hack3270.send_key('PF14', b'\xc2')
-        if self.aid_pf15.get(): self.hack3270.send_key('PF15', b'\xc3')
-        if self.aid_pf16.get(): self.hack3270.send_key('PF16', b'\xc4')
-        if self.aid_pf17.get(): self.hack3270.send_key('PF17', b'\xc5')
-        if self.aid_pf18.get(): self.hack3270.send_key('PF18', b'\xc6')
-        if self.aid_pf19.get(): self.hack3270.send_key('PF19', b'\xc7')
-        if self.aid_pf20.get(): self.hack3270.send_key('PF20', b'\xc8')
-        if self.aid_pf21.get(): self.hack3270.send_key('PF21', b'\xc9')
-        if self.aid_pf22.get(): self.hack3270.send_key('PF22', b'\x4a')
-        if self.aid_pf23.get(): self.hack3270.send_key('PF23', b'\x4b')
-        if self.aid_pf24.get(): self.hack3270.send_key('PF24', b'\x4c')
-        if self.aid_oicr.get(): self.hack3270.send_key('OICR', b'\xe6')
-        if self.aid_msr_mhs.get(): self.hack3270.send_key('MSR_MHS', b'\xe7')
-        if self.aid_select.get(): self.hack3270.send_key('SELECT', b'\x7e')
-        if self.aid_pa1.get(): self.hack3270.send_key('PA1', b'\x6c')
-        if self.aid_pa2.get(): self.hack3270.send_key('PA2', b'\x6e')
-        if self.aid_pa3.get(): self.hack3270.send_key('PA3', b'\x6b')
-        if self.aid_clear.get(): self.hack3270.send_key('CLEAR', b'\x6d')
-        if self.aid_sysreq.get(): self.hack3270.send_key('SYSREQ', b'\xf0')
+        if self.aid_no.get(): self.Gr0gu3270.send_key('NO', b'\x60')
+        if self.aid_qreply.get(): self.Gr0gu3270.send_key('QREPLY', b'\x61')
+        if self.aid_enter.get(): self.Gr0gu3270.send_key('ENTER', b'\x7d')
+        if self.aid_pf1.get(): self.Gr0gu3270.send_key('PF1', b'\xf1')
+        if self.aid_pf2.get(): self.Gr0gu3270.send_key('PF2', b'\xf2')
+        if self.aid_pf3.get(): self.Gr0gu3270.send_key('PF3', b'\xf3')
+        if self.aid_pf4.get(): self.Gr0gu3270.send_key('PF4', b'\xf4')
+        if self.aid_pf5.get(): self.Gr0gu3270.send_key('PF5', b'\xf5')
+        if self.aid_pf6.get(): self.Gr0gu3270.send_key('PF6', b'\xf6')
+        if self.aid_pf7.get(): self.Gr0gu3270.send_key('PF7', b'\xf7')
+        if self.aid_pf8.get(): self.Gr0gu3270.send_key('PF8', b'\xf8')
+        if self.aid_pf9.get(): self.Gr0gu3270.send_key('PF9', b'\xf9')
+        if self.aid_pf10.get(): self.Gr0gu3270.send_key('PF10', b'\x7a')
+        if self.aid_pf11.get(): self.Gr0gu3270.send_key('PF11', b'\x7b')
+        if self.aid_pf12.get(): self.Gr0gu3270.send_key('PF12', b'\x7c')
+        if self.aid_pf13.get(): self.Gr0gu3270.send_key('PF13', b'\xc1')
+        if self.aid_pf14.get(): self.Gr0gu3270.send_key('PF14', b'\xc2')
+        if self.aid_pf15.get(): self.Gr0gu3270.send_key('PF15', b'\xc3')
+        if self.aid_pf16.get(): self.Gr0gu3270.send_key('PF16', b'\xc4')
+        if self.aid_pf17.get(): self.Gr0gu3270.send_key('PF17', b'\xc5')
+        if self.aid_pf18.get(): self.Gr0gu3270.send_key('PF18', b'\xc6')
+        if self.aid_pf19.get(): self.Gr0gu3270.send_key('PF19', b'\xc7')
+        if self.aid_pf20.get(): self.Gr0gu3270.send_key('PF20', b'\xc8')
+        if self.aid_pf21.get(): self.Gr0gu3270.send_key('PF21', b'\xc9')
+        if self.aid_pf22.get(): self.Gr0gu3270.send_key('PF22', b'\x4a')
+        if self.aid_pf23.get(): self.Gr0gu3270.send_key('PF23', b'\x4b')
+        if self.aid_pf24.get(): self.Gr0gu3270.send_key('PF24', b'\x4c')
+        if self.aid_oicr.get(): self.Gr0gu3270.send_key('OICR', b'\xe6')
+        if self.aid_msr_mhs.get(): self.Gr0gu3270.send_key('MSR_MHS', b'\xe7')
+        if self.aid_select.get(): self.Gr0gu3270.send_key('SELECT', b'\x7e')
+        if self.aid_pa1.get(): self.Gr0gu3270.send_key('PA1', b'\x6c')
+        if self.aid_pa2.get(): self.Gr0gu3270.send_key('PA2', b'\x6e')
+        if self.aid_pa3.get(): self.Gr0gu3270.send_key('PA3', b'\x6b')
+        if self.aid_clear.get(): self.Gr0gu3270.send_key('CLEAR', b'\x6d')
+        if self.aid_sysreq.get(): self.Gr0gu3270.send_key('SYSREQ', b'\xf0')
         self.send_label["text"] = 'Ready.'
 
         self.enable_tabs()
@@ -693,27 +693,27 @@ class tkhack3270:
         record_id = dict_item['values'][0]
         record_cs = dict_item['values'][2]
 
-        for row in self.hack3270.get_log(record_id):
-            ebcdic_data = self.hack3270.get_ascii(row[5])
+        for row in self.Gr0gu3270.get_log(record_id):
+            ebcdic_data = self.Gr0gu3270.get_ascii(row[5])
             self.d1.config(state='normal')
             self.d1.delete('1.0', tk.END)
             if re.search("^tn3270 ", row[3]):
-                parsed_3270 = self.hack3270.parse_telnet(ebcdic_data)
+                parsed_3270 = self.Gr0gu3270.parse_telnet(ebcdic_data)
             else:
-                parsed_3270 = self.hack3270.parse_3270(ebcdic_data)
+                parsed_3270 = self.Gr0gu3270.parse_3270(ebcdic_data)
             self.d1.insert(tk.INSERT, parsed_3270)
             self.d1.config(state='disabled')
             self.root.update()
             if record_cs == "Server" and self.auto_server.get() == 1:
-                self.hack3270.send_client(row[5])
+                self.Gr0gu3270.send_client(row[5])
             if record_cs == "Client" and self.auto_client.get() == 1:
-                self.hack3270.send_server(row[5])
+                self.Gr0gu3270.send_server(row[5])
         return
     
     def export_csv(self):
         self.export_label["text"] = 'Starting export.'
         self.root.update()
-        csv_filename = self.hack3270.export_csv()
+        csv_filename = self.Gr0gu3270.export_csv()
         self.export_label["text"] = 'Export finished, filename is: ' + csv_filename
         self.root.update()
         return
@@ -803,23 +803,23 @@ class tkhack3270:
         self.abend_treev.heading("5", text="Description")
 
     def abend_toggle_pressed(self):
-        if self.hack3270.get_abend_detection():
-            self.hack3270.set_abend_detection(0)
+        if self.Gr0gu3270.get_abend_detection():
+            self.Gr0gu3270.set_abend_detection(0)
             self.abend_toggle_btn["text"] = 'OFF'
         else:
-            self.hack3270.set_abend_detection(1)
+            self.Gr0gu3270.set_abend_detection(1)
             self.abend_toggle_btn["text"] = 'ON'
         self.root.update()
 
     def update_abend_tab(self):
-        for row in self.hack3270.all_abends(self.last_abend_id):
+        for row in self.Gr0gu3270.all_abends(self.last_abend_id):
             self.abend_treev.insert('', 'end', text="", values=(
                 row[0],
                 datetime.datetime.fromtimestamp(float(row[1])),
                 row[2], row[3], row[4]
             ))
             self.last_abend_id = int(row[0])
-        self.abend_count_label["text"] = 'ABENDs detected: {}'.format(self.hack3270.get_abend_count())
+        self.abend_count_label["text"] = 'ABENDs detected: {}'.format(self.Gr0gu3270.get_abend_count())
 
     # ---- PR2: Screen Map Tab ----
 
@@ -857,7 +857,7 @@ class tkhack3270:
         # Clear existing items
         for item in self.smap_treev.get_children():
             self.smap_treev.delete(item)
-        screen_map = self.hack3270.get_screen_map()
+        screen_map = self.Gr0gu3270.get_screen_map()
         for f in screen_map:
             content = f.get('content', '').replace('\n', ' ')
             self.smap_treev.insert('', 'end', text="", values=(
@@ -901,23 +901,23 @@ class tkhack3270:
         self.txn_treev.heading("6", text="Status")
 
     def txn_toggle_pressed(self):
-        if self.hack3270.get_transaction_tracking():
-            self.hack3270.set_transaction_tracking(0)
+        if self.Gr0gu3270.get_transaction_tracking():
+            self.Gr0gu3270.set_transaction_tracking(0)
             self.txn_toggle_btn["text"] = 'OFF'
         else:
-            self.hack3270.set_transaction_tracking(1)
+            self.Gr0gu3270.set_transaction_tracking(1)
             self.txn_toggle_btn["text"] = 'ON'
         self.root.update()
 
     def update_transactions_tab(self):
-        for row in self.hack3270.all_transactions(self.last_txn_id):
+        for row in self.Gr0gu3270.all_transactions(self.last_txn_id):
             self.txn_treev.insert('', 'end', text="", values=(
                 row[0],
                 datetime.datetime.fromtimestamp(float(row[1])),
                 row[3], row[4], row[5], row[6]
             ))
             self.last_txn_id = int(row[0])
-        stats = self.hack3270.get_transaction_stats()
+        stats = self.Gr0gu3270.get_transaction_stats()
         self.txn_stats_label["text"] = 'Total: {} | Avg: {}ms | Min: {}ms | Max: {}ms'.format(
             stats['count'], stats['avg_ms'], stats['min_ms'], stats['max_ms'])
 
@@ -1014,17 +1014,17 @@ class tkhack3270:
             self.root.update()
             return
 
-        self.hack3270.audit_start(txn_list)
+        self.Gr0gu3270.audit_start(txn_list)
         self.audit_status_label["text"] = "Auditing {} transactions...".format(len(txn_list))
         self.disable_tabs(10)
         self.root.update()
         self.audit_step()
 
     def audit_step(self):
-        if not self.hack3270.get_audit_running():
-            self.audit_status_label["text"] = "Audit complete. {} results.".format(len(self.hack3270.audit_results))
+        if not self.Gr0gu3270.get_audit_running():
+            self.audit_status_label["text"] = "Audit complete. {} results.".format(len(self.Gr0gu3270.audit_results))
             self.enable_tabs()
-            if self.hack3270.is_offline():
+            if self.Gr0gu3270.is_offline():
                 self.tabControl.tab(0, state="disabled")
                 self.tabControl.tab(1, state="disabled")
                 self.tabControl.tab(2, state="disabled")
@@ -1034,7 +1034,7 @@ class tkhack3270:
             self.root.update()
             return
 
-        txn = self.hack3270.audit_next()
+        txn = self.Gr0gu3270.audit_next()
         if txn is None:
             self.audit_status_label["text"] = "Audit complete."
             self.enable_tabs()
@@ -1043,16 +1043,16 @@ class tkhack3270:
             return
 
         self.audit_status_label["text"] = "Testing: {} ({}/{})".format(
-            txn, self.hack3270.audit_index, len(self.hack3270.audit_txn_list))
+            txn, self.Gr0gu3270.audit_index, len(self.Gr0gu3270.audit_txn_list))
         self.root.update()
 
         # Wait for response
         try:
-            rlist, _, _ = select.select([self.hack3270.server], [], [], 2)
-            if self.hack3270.server in rlist:
-                server_data = self.hack3270.server.recv(libhack3270.BUFFER_MAX)
+            rlist, _, _ = select.select([self.Gr0gu3270.server], [], [], 2)
+            if self.Gr0gu3270.server in rlist:
+                server_data = self.Gr0gu3270.server.recv(libGr0gu3270.BUFFER_MAX)
                 if len(server_data) > 0:
-                    self.hack3270.handle_server(server_data)
+                    self.Gr0gu3270.handle_server(server_data)
         except Exception as e:
             self.logger.debug("Audit recv error: {}".format(e))
 
@@ -1061,18 +1061,18 @@ class tkhack3270:
         self.root.after(500, self.audit_step)
 
     def audit_stop(self):
-        self.hack3270.audit_stop()
+        self.Gr0gu3270.audit_stop()
         self.audit_status_label["text"] = "Audit stopped."
         self.enable_tabs()
         self.root.update()
 
     def audit_export(self):
-        csv_file = self.hack3270.export_audit_csv()
+        csv_file = self.Gr0gu3270.export_audit_csv()
         self.audit_status_label["text"] = "Exported to: " + csv_file
         self.root.update()
 
     def update_audit_tab(self):
-        for row in self.hack3270.all_audit_results(self.last_audit_id):
+        for row in self.Gr0gu3270.all_audit_results(self.last_audit_id):
             status = row[3]
             tag_map = {
                 'ACCESSIBLE': 'accessible',
@@ -1093,7 +1093,7 @@ class tkhack3270:
             self.last_audit_id = int(row[0])
 
         # Update summary
-        results = self.hack3270.audit_results
+        results = self.Gr0gu3270.audit_results
         counts = {'ACCESSIBLE': 0, 'DENIED': 0, 'ABEND': 0, 'NOT_FOUND': 0, 'ERROR': 0, 'UNKNOWN': 0}
         for r in results:
             s = r.get('status', 'UNKNOWN')
@@ -1106,7 +1106,7 @@ class tkhack3270:
         self.audit_status_label["text"] = "Checking SPOOL API..."
         self.root.update()
         try:
-            result = self.hack3270.spool_check()
+            result = self.Gr0gu3270.spool_check()
             self.audit_status_label["text"] = "SPOOL: {}".format(result['status'])
             self.update_audit_tab()
             if result['status'] == 'SPOOL_OPEN':
@@ -1134,7 +1134,7 @@ class tkhack3270:
         self.audit_status_label["text"] = "Submitting FTP PoC..."
         self.root.update()
         try:
-            result = self.hack3270.spool_poc_ftp(ip, port_int)
+            result = self.Gr0gu3270.spool_poc_ftp(ip, port_int)
             self.audit_status_label["text"] = "SPOOL PoC: {}".format(result['status'])
             self.update_audit_tab()
             messagebox.showinfo("SPOOL/RCE", result['detail'])
@@ -1143,7 +1143,7 @@ class tkhack3270:
         self.root.update()
 
     def aid_refresh(self):
-        aids = self.hack3270.current_aids()
+        aids = self.Gr0gu3270.current_aids()
         #self.logger.debug("Found aids: {}".format(aids))
         self.aid_setdef()
         if "PF1" in aids: self.aid_pf1.set(0)

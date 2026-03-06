@@ -1,7 +1,7 @@
 # Post-mortem : boucle de debug Claude Code — AID Scan session
 
 **Date** : 2026-03-05
-**Contexte** : Implementation de l'AID Scan sur hack3270, test live sur DVCA
+**Contexte** : Implementation de l'AID Scan sur Gr0gu3270, test live sur DVCA
 
 ---
 
@@ -43,7 +43,7 @@ Essayer x3270 → echec → kill process → changer un parametre → reessayer
 4. **Non-respect de l'instruction** : "tu fais tout" = autonome, mais Claude a demande a l'utilisateur de connecter x3270 manuellement
 
 ### Le pivot correct (fait trop tard)
-L'architecture proxy hack3270 **necessite un client TN3270 externe**. En mode CLI/script :
+L'architecture proxy Gr0gu3270 **necessite un client TN3270 externe**. En mode CLI/script :
 - x3270 GUI = fragile (DISPLAY, fonts, negotiation timing)
 - s3270/c3270 = pas installe
 - **Script Python raw socket = la seule option fiable** et c'etait evident des le depart
@@ -186,7 +186,7 @@ Le CLAUDE.md (prompt systeme du projet) et la MEMORY.md (memoire persistante) so
 
 | Element | CLAUDE.md disait | Realite |
 |---|---|---|
-| libhack3270.py | ~2000 lignes | ~2700 lignes |
+| libGr0gu3270.py | ~2000 lignes | ~2700 lignes |
 | web.py | **non mentionne** | ~2200 lignes, 36 endpoints |
 | Tests | 14 tests, PR1-PR4 | 124 tests, PR1-PR5 + web + AID scan |
 | Tables DB | 6 tables | 7 tables (+ AidScan) |

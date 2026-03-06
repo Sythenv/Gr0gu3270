@@ -122,7 +122,7 @@ def make_pdf(filename):
 
     items = [
         ("1.", "Le contexte : qu'est-ce qu'un mainframe CICS et pourquoi le tester"),
-        ("2.", "L'outil : hack3270 — proxy d'interception TN3270"),
+        ("2.", "L'outil : Gr0gu3270 — proxy d'interception TN3270"),
         ("3.", "L'experience : un prompt, 4 modules, 30 minutes"),
         ("4.", "Les resultats : ce que l'agent a produit"),
         ("5.", "Ce que ca change pour chaque metier"),
@@ -176,12 +176,12 @@ def make_pdf(filename):
     new_slide(c)
 
     # ╔══════════════════════════════════════╗
-    # ║  SLIDE 4 — hack3270 avant            ║
+    # ║  SLIDE 4 — Gr0gu3270 avant            ║
     # ╚══════════════════════════════════════╝
     draw_bg(c)
     draw_header_bar(c)
     draw_text_block(c, 40*mm, H - 55*mm, W - 80*mm, 30*mm,
-                    "hack3270 : l'outil de depart", style_title())
+                    "Gr0gu3270 : l'outil de depart", style_title())
 
     draw_text_block(c, 40*mm, H - 78*mm, W - 80*mm, 20*mm,
                     "Un proxy man-in-the-middle entre l'emulateur TN3270 et le mainframe",
@@ -191,7 +191,7 @@ def make_pdf(filename):
     c.setFont('Courier', 12)
     c.setFillColor(HexColor('#88ccff'))
     diagram = [
-        "Emulateur TN3270  <──>  hack3270 (proxy)  <──>  Mainframe CICS",
+        "Emulateur TN3270  <──>  Gr0gu3270 (proxy)  <──>  Mainframe CICS",
         "                            │",
         "                       SQLite DB",
     ]

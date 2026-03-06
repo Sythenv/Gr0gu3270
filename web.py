@@ -1,7 +1,7 @@
 """
-Hack3270 Web UI
+Gr0gu3270 Web UI
 ~~~~~~~~~~~~~~~
-Web-based interface for hack3270 using stdlib http.server.
+Web-based interface for Gr0gu3270 using stdlib http.server.
 Replaces Tkinter GUI for WSL/remote usage.
 Accessible at http://localhost:8080
 """
@@ -24,7 +24,7 @@ class ReusableHTTPServer(HTTPServer):
     allow_reuse_address = True
 from urllib.parse import urlparse, parse_qs
 
-import libhack3270
+import libGr0gu3270
 
 
 class NonBlockingClientSocket:
@@ -106,13 +106,13 @@ class NonBlockingClientSocket:
     def settimeout(self, t):
         pass  # We manage blocking ourselves
 
-# ---- Thread-safe wrapper around hack3270 ----
+# ---- Thread-safe wrapper around Gr0gu3270 ----
 
-class Hack3270State:
-    """Thread-safe wrapper around the hack3270 object."""
+class Gr0gu3270State:
+    """Thread-safe wrapper around the Gr0gu3270 object."""
 
-    def __init__(self, hack3270):
-        self.h = hack3270
+    def __init__(self, Gr0gu3270):
+        self.h = Gr0gu3270
         self.lock = threading.Lock()
         self.last_log_id = 0
         self.last_abend_id = 0
@@ -148,7 +148,7 @@ class Hack3270State:
                 'audit_running': bool(self.h.audit_running),
                 'aid_scan_running': bool(self.h.aid_scan_running),
                 'disabled_tabs': self.disabled_tabs,
-                'version': libhack3270.__version__,
+                'version': libGr0gu3270.__version__,
                 'project_name': self.h.project_name,
             }
 
@@ -555,7 +555,7 @@ class Hack3270State:
                 try:
                     rlist, _, _ = select.select([server_sock], [], [], 2)
                     if server_sock in rlist:
-                        server_data = server_sock.recv(libhack3270.BUFFER_MAX)
+                        server_data = server_sock.recv(libGr0gu3270.BUFFER_MAX)
                         if len(server_data) > 0:
                             with self.lock:
                                 self.h.handle_server(server_data)
@@ -807,10 +807,10 @@ class Hack3270State:
 
 # ---- HTTP Handler ----
 
-class Hack3270Handler(BaseHTTPRequestHandler):
-    """HTTP request handler for hack3270 Web UI."""
+class Gr0gu3270Handler(BaseHTTPRequestHandler):
+    """HTTP request handler for Gr0gu3270 Web UI."""
 
-    state = None  # Set by Hack3270WebUI
+    state = None  # Set by Gr0gu3270WebUI
 
     def log_message(self, format, *args):
         # Suppress default request logging
@@ -975,13 +975,13 @@ class Hack3270Handler(BaseHTTPRequestHandler):
 
 # ---- Orchestrator ----
 
-class Hack3270WebUI:
+class Gr0gu3270WebUI:
     """Main orchestrator: launches HTTP server + daemon thread."""
 
-    def __init__(self, hack3270_obj, port=8080):
-        self.hack3270 = hack3270_obj
+    def __init__(self, Gr0gu3270_obj, port=8080):
+        self.Gr0gu3270 = Gr0gu3270_obj
         self.port = port
-        self.state = Hack3270State(hack3270_obj)
+        self.state = Gr0gu3270State(Gr0gu3270_obj)
         self.logger = logging.getLogger(__name__)
 
     def _kill_port_owner(self):
@@ -1044,10 +1044,10 @@ class Hack3270WebUI:
         daemon_thread.start()
 
         # Set handler state
-        Hack3270Handler.state = self.state
+        Gr0gu3270Handler.state = self.state
 
         # Start HTTP server
-        self.httpd = ReusableHTTPServer(('0.0.0.0', self.port), Hack3270Handler)
+        self.httpd = ReusableHTTPServer(('0.0.0.0', self.port), Gr0gu3270Handler)
         print("Web UI at http://localhost:{}".format(self.port))
         try:
             self.httpd.serve_forever()
@@ -1072,7 +1072,7 @@ class Hack3270WebUI:
             self.httpd.shutdown()
         except Exception:
             pass
-        self.hack3270.on_closing()
+        self.Gr0gu3270.on_closing()
 
 
 # ---- HTML SPA ----
@@ -1082,7 +1082,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>hack3270</title>
+<title>Gr0gu3270</title>
 <style>
 :root {
   --bg: #0a0a0a;
@@ -1103,12 +1103,16 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 .rv { background: var(--head); color: var(--bg); padding: 1px 8px; font-weight: bold; }
 
 /* Header */
-.header { background: var(--bg); padding: 4px 0; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.header .h-title { background: var(--head); color: var(--bg); padding: 2px 10px; font-size: 22px; font-weight: bold; }
-.header .status { font-size: 17px; color: var(--dim); }
+.header { background: var(--bg); padding: 0; display: flex; align-items: stretch; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.header-grogu { color: #00969a; font-size: 5px; line-height: 1.1; white-space: pre; padding: 2px 8px; display: flex; align-items: center; text-shadow: 0 0 6px #00969a; opacity: 0.8; border-right: 1px solid var(--border); }
+.header-left { display: flex; flex-direction: column; flex: 1; min-width: 0; justify-content: flex-end; }
+.header .h-title { background: var(--head); color: var(--bg); padding: 5px 10px; font-size: 22px; font-weight: bold; }
+.header .status { font-size: 17px; color: var(--dim); padding: 0 10px; white-space: nowrap; }
 .header .status .online { color: var(--text); }
 .header .status .offline { color: var(--alert); }
-.header .toggles { display: flex; gap: 4px; margin-left: auto; }
+.header .toggles { display: flex; gap: 4px; margin-left: auto; padding-right: 4px; }
+.header-bottom { display: flex; align-items: center; gap: 0; }
+.header-bottom .header-toolbar { display: flex; gap: 0; }
 .toggle-pill { display: flex; align-items: center; justify-content: center; width: 28px; height: 22px; font-size: 17px; font-weight: bold; cursor: pointer; border: 1px solid var(--border); background: var(--bg); color: var(--dim); transition: all 0.15s; user-select: none; }
 .toggle-pill.on { background: var(--head); border-color: var(--head); color: var(--bg); }
 .toggle-pill .dot-indicator { display: none; }
@@ -1143,7 +1147,6 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 
 /* Accordion tool bar */
 /* Toolbar (top groups) */
-.toolbar { display: flex; gap: 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .toolbar-btn { background: var(--bg); color: var(--dim); border: none; border-right: 1px solid var(--border); padding: 5px 14px; font-family: inherit; font-size: 17px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; transition: all 0.15s; }
 .toolbar-btn:hover { color: var(--text); }
 .toolbar-btn.active { background: var(--head); color: var(--bg); text-shadow: none; }
@@ -1261,7 +1264,6 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 /* Splash screen */
 #splash { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.5s; }
 #splash.hidden { opacity: 0; pointer-events: none; }
-#splash .grogu-art { color: var(--text); font-size: 12px; line-height: 1.1; white-space: pre; text-align: center; margin-bottom: 16px; text-shadow: 0 0 8px var(--glow); }
 #splash .splash-title { background: var(--head); color: var(--bg); padding: 4px 24px; font-size: 30px; font-weight: bold; margin-bottom: 12px; text-shadow: none; }
 #splash .splash-status { color: var(--text); font-size: 20px; }
 @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
@@ -1271,18 +1273,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 <body>
 <!-- SPLASH SCREEN -->
 <div id="splash">
-  <pre class="grogu-art">
-&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;
-&#x2800;&#x2800;&#x28C0;&#x28E3;&#x2847;&#x2801;&#x2801;&#x2801;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;
-&#x2800;&#x2830;&#x28FF;&#x28E7;&#x2800;&#x2800;&#x2800;&#x2800;&#x2809;&#x280B;&#x28BF;&#x283F;&#x2809;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;
-&#x2800;&#x2800;&#x2808;&#x283B;&#x28FF;&#x28E6;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2809;&#x280B;&#x28BF;&#x28F7;&#x28E4;&#x2800;&#x2800;
-&#x2800;&#x2800;&#x2800;&#x2800;&#x2808;&#x28BF;&#x28F7;&#x2800;&#x28E0;&#x28FF;&#x283D;&#x28B7;&#x2846;&#x2800;&#x2800;&#x2800;&#x28A0;&#x28FF;&#x28FF;&#x28FF;&#x28E6;&#x2800;
-&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2808;&#x283B;&#x28F7;&#x283B;&#x28FF;&#x28A7;&#x283D;&#x28FF;&#x28A7;&#x2800;&#x28C0;&#x28C0;&#x2800;&#x28BF;&#x28FF;&#x28FF;&#x28FF;&#x2897;
-&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x280B;&#x28BF;&#x28F6;&#x2800;&#x2800;&#x2880;&#x2880;&#x2800;&#x2800;&#x28BF;&#x28FF;&#x28FF;&#x28FF;&#x28BF;&#x2800;&#x2800;
-&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x280B;&#x28FF;&#x28F7;&#x2800;&#x283B;&#x28FF;&#x28F6;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;
-&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;&#x2808;&#x28BF;&#x28BF;&#x2800;&#x2800;&#x283B;&#x28FF;&#x2846;&#x2800;&#x2800;&#x2800;&#x2800;&#x2800;
-  </pre>
-  <div class="splash-title">hack3270</div>
+  <div class="splash-title">Gr0gu3270</div>
   <div class="splash-status" id="splash-status"><span class="splash-cursor">_</span> CONNECTING...</div>
 </div>
 
@@ -1291,21 +1282,44 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 <div class="container">
 <!-- HEADER -->
 <div class="header">
-  <span class="h-title">hack3270</span>
-  <div class="status">
-    <span id="conn-status">...</span>
-    <span id="project-name" style="margin-left:6px"></span>
-  </div>
-  <div class="toggles">
-    <div class="toggle-pill" id="tgl-hack" onclick="toggleHackFields()" title="Hack Fields">H</div>
-    <div class="toggle-pill" id="tgl-color" onclick="toggleHackColor()" title="Hack Color">C</div>
-    <div class="toggle-pill" id="tgl-abend" onclick="toggleAbend()" title="ABEND Detection">A</div>
-    <div class="toggle-pill" id="tgl-txn" onclick="toggleTxnTracking()" title="Transaction Tracking">T</div>
+  <pre class="header-grogu">
+⠀⢀⣠⣄⣀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣴⣶⡾⠿⠿⠿⠿⢷⣶⣦⣤⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⢰⣿⡟⠛⠛⠛⠻⠿⠿⢿⣶⣶⣦⣤⣤⣀⣀⡀⣀⣴⣾⡿⠟⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠉⠙⠻⢿⣷⣦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⣀⣀⣀⣀⡀
+⠀⠻⣿⣦⡀⠀⠉⠓⠶⢦⣄⣀⠉⠉⠛⠛⠻⠿⠟⠋⠁⠀⠀⠀⣤⡀⠀⠀⢠⠀⠀⠀⣠⠀⠀⠀⠀⠈⠙⠻⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠟⠛⠛⢻⣿
+⠀⠀⠈⠻⣿⣦⠀⠀⠀⠀⠈⠙⠻⢷⣶⣤⡀⠀⠀⠀⠀⢀⣀⡀⠀⠙⢷⡀⠸⡇⠀⣰⠇⠀⢀⣀⣀⠀⠀⠀⠀⠀⠀⣀⣠⣤⣤⣶⡶⠶⠶⠒⠂⠀⠀⣠⣾⠟
+⠀⠀⠀⠀⠈⢿⣷⡀⠀⠀⠀⠀⠀⠀⠈⢻⣿⡄⣠⣴⣿⣯⣭⣽⣷⣆⠀⠁⠀⠀⠀⠀⢠⣾⣿⣿⣿⣿⣦⡀⠀⣠⣾⠟⠋⠁⠀⠀⠀⠀⠀⠀⠀⣠⣾⡟⠁⠀
+⠀⠀⠀⠀⠀⠈⢻⣷⣄⠀⠀⠀⠀⠀⠀⠀⣿⡗⢻⣿⣧⣽⣿⣿⣿⣧⠀⠀⣀⣀⠀⢠⣿⣧⣼⣿⣿⣿⣿⠗⠰⣿⠃⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⡿⠋⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠙⢿⣶⣄⡀⠀⠀⠀⠀⠸⠃⠈⠻⣿⣿⣿⣿⣿⡿⠃⠾⣥⡬⠗⠸⣿⣿⣿⣿⣿⡿⠛⠀⢀⡟⠀⠀⠀⠀⠀⠀⣀⣠⣾⡿⠋⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠿⣷⣶⣤⣤⣄⣰⣄⠀⠀⠉⠉⠉⠁⠀⢀⣀⣠⣄⣀⡀⠀⠉⠉⠉⠀⠀⢀⣠⣾⣥⣤⣤⣤⣶⣶⡿⠿⠛⠉⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⢻⣿⠛⢿⣷⣦⣤⣴⣶⣶⣦⣤⣤⣤⣤⣬⣥⡴⠶⠾⠿⠿⠿⠿⠛⢛⣿⣿⣿⣯⡉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⣧⡀⠈⠉⠀⠈⠁⣾⠛⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣴⣿⠟⠉⣹⣿⣇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣸⣿⣿⣦⣀⠀⠀⠀⢻⡀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣤⣶⣿⠋⣿⠛⠃⠀⣈⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⡿⢿⡀⠈⢹⡿⠶⣶⣼⡇⠀⢀⣀⣀⣤⣴⣾⠟⠋⣡⣿⡟⠀⢻⣶⠶⣿⣿⠛⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⣷⡈⢿⣦⣸⠇⢀⡿⠿⠿⡿⠿⠿⣿⠛⠋⠁⠀⣴⠟⣿⣧⡀⠈⢁⣰⣿⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⢻⣦⣈⣽⣀⣾⠃⠀⢸⡇⠀⢸⡇⠀⢀⣠⡾⠋⢰⣿⣿⣿⣿⡿⠟⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠿⢿⣿⣿⡟⠛⠃⠀⠀⣾⠀⠀⢸⡇⠐⠿⠋⠀⠀⣿⢻⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠁⢀⡴⠋⠀⣿⠀⠀⢸⠇⠀⠀⠀⠀⠀⠁⢸⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⡿⠟⠋⠀⠀⠀⣿⠀⠀⣸⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣁⣀⠀⠀⠀⠀⣿⡀⠀⣿⠀⠀⠀⠀⠀⠀⢀⣈⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠛⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠟⠛⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
+  </pre>
+  <div class="header-left">
+    <div class="header-bottom">
+      <span class="h-title">Gr0gu3270</span>
+      <div class="status">
+        <span id="conn-status">...</span>
+        <span id="project-name" style="margin-left:6px"></span>
+      </div>
+      <div class="header-toolbar" id="toolbar"></div>
+      <div class="toggles">
+        <div class="toggle-pill" id="tgl-hack" onclick="toggleHackFields()" title="Hack Fields">H</div>
+        <div class="toggle-pill" id="tgl-color" onclick="toggleHackColor()" title="Hack Color">C</div>
+        <div class="toggle-pill" id="tgl-abend" onclick="toggleAbend()" title="ABEND Detection">A</div>
+        <div class="toggle-pill" id="tgl-txn" onclick="toggleTxnTracking()" title="Transaction Tracking">T</div>
+      </div>
+    </div>
   </div>
 </div>
-
-<!-- TOOLBAR (top groups) -->
-<div class="toolbar" id="toolbar"></div>
 <div class="toolbar-panel" id="toolbar-panel"></div>
 
 <!-- MAIN: vertical stack -->
@@ -2007,7 +2021,7 @@ async function loadStatistics() {
 }
 
 async function loadHelp() {
-  document.getElementById('help-content').textContent = 'hack3270 - TN3270 Penetration Testing Toolkit\n\nMain view: Screen Map (top) + Events timeline (bottom)\nAction bar: click tabs to expand tools\nLogs & Audit moved to action bar (on-demand)\n\nKeyboard Shortcuts:\n  Ctrl+H  Toggle Hack Fields\n  Ctrl+G  Toggle Hack Color\n  Ctrl+B  Toggle ABEND Detection\n  Ctrl+T  Toggle Transaction Tracking\n  Esc     Close action panel';
+  document.getElementById('help-content').textContent = 'Gr0gu3270 - TN3270 Penetration Testing Toolkit\n\nMain view: Screen Map (top) + Events timeline (bottom)\nAction bar: click tabs to expand tools\nLogs & Audit moved to action bar (on-demand)\n\nKeyboard Shortcuts:\n  Ctrl+H  Toggle Hack Fields\n  Ctrl+G  Toggle Hack Color\n  Ctrl+B  Toggle ABEND Detection\n  Ctrl+T  Toggle Transaction Tracking\n  Esc     Close action panel';
 }
 
 async function loadAids() {

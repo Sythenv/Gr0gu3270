@@ -1,5 +1,5 @@
 """
-Hack3270 Python Library
+Gr0gu3270 Python Library
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 This python library was developed to create an interoperable object
@@ -10,7 +10,7 @@ interface provided by this class, the example UI is included in tk.py
 __version__ = '1.2.5-2'
 __author__ = 'Garland Glessner'
 __license__ = "GPL"
-__name__ = "hack3270"
+__name__ = "Gr0gu3270"
 
 import logging
 import sqlite3
@@ -125,7 +125,7 @@ e2a = [
 
 BUFFER_MAX = 10000
 
-class hack3270:
+class Gr0gu3270:
 
     AIDS = {
         'NO': b'\x60',
@@ -265,7 +265,7 @@ class hack3270:
         if not self.logger.hasHandlers():
             self.logger.addHandler(ch)
         
-        self.logger.debug("Hack3270 Initializing")
+        self.logger.debug("Gr0gu3270 Initializing")
         # Initialize the database 
         self.db_init()
 

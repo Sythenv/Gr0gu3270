@@ -1,7 +1,7 @@
 # CLAUDE.md — Framework pour projet de recherche avec coding agent
 
 > **Version** : 1.0
-> **Origine** : Projet hack3270 — Pentest CICS (2026)
+> **Origine** : Projet Gr0gu3270 — Pentest CICS (2026)
 > **Usage** : Copier ce fichier dans votre projet, renommer en `CLAUDE.md`, adapter les sections marquees `[A ADAPTER]`.
 
 ---

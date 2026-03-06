@@ -1,5 +1,5 @@
 """
-Tests for hack3270 Web UI API endpoints.
+Tests for Gr0gu3270 Web UI API endpoints.
 Uses the test client pattern with threading.
 """
 import os
@@ -14,8 +14,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from libhack3270 import hack3270
-from web import Hack3270State, Hack3270Handler, Hack3270WebUI, ReusableHTTPServer, NonBlockingClientSocket
+from libGr0gu3270 import Gr0gu3270
+from web import Gr0gu3270State, Gr0gu3270Handler, Gr0gu3270WebUI, ReusableHTTPServer, NonBlockingClientSocket
 from http.server import HTTPServer
 import socket
 import queue
@@ -23,9 +23,9 @@ import queue
 
 @pytest.fixture
 def h3270(tmp_path):
-    """hack3270 instance with temp DB, offline mode."""
+    """Gr0gu3270 instance with temp DB, offline mode."""
     db_name = str(tmp_path / "test")
-    obj = hack3270(
+    obj = Gr0gu3270(
         server_ip="127.0.0.1",
         server_port=3270,
         proxy_port=3271,
@@ -39,14 +39,14 @@ def h3270(tmp_path):
 @pytest.fixture
 def state(h3270):
     """Thread-safe state wrapper."""
-    return Hack3270State(h3270)
+    return Gr0gu3270State(h3270)
 
 
 @pytest.fixture
 def web_server(state):
     """Start a real HTTP server on a random port for integration tests."""
-    Hack3270Handler.state = state
-    server = HTTPServer(('127.0.0.1', 0), Hack3270Handler)
+    Gr0gu3270Handler.state = state
+    server = HTTPServer(('127.0.0.1', 0), Gr0gu3270Handler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -68,7 +68,7 @@ def post_json(port, path, data=None):
         return json.loads(resp.read().decode())
 
 
-# ---- Unit tests on Hack3270State ----
+# ---- Unit tests on Gr0gu3270State ----
 
 def test_get_status_offline(state):
     s = state.get_status()
@@ -172,7 +172,7 @@ def test_http_root(web_server):
     url = 'http://127.0.0.1:{}/'.format(web_server)
     with urllib.request.urlopen(url) as resp:
         html = resp.read().decode()
-        assert 'hack3270' in html
+        assert 'Gr0gu3270' in html
         assert resp.status == 200
 
 def test_http_api_status(web_server):
@@ -265,23 +265,23 @@ def test_reusable_server_allows_reuse():
 
 def test_reusable_server_binds_after_close(state):
     """Can rebind the same port immediately after closing a ReusableHTTPServer."""
-    Hack3270Handler.state = state
-    srv1 = ReusableHTTPServer(('127.0.0.1', 0), Hack3270Handler)
+    Gr0gu3270Handler.state = state
+    srv1 = ReusableHTTPServer(('127.0.0.1', 0), Gr0gu3270Handler)
     port = srv1.server_address[1]
     srv1.server_close()
     # Should not raise OSError
-    srv2 = ReusableHTTPServer(('127.0.0.1', port), Hack3270Handler)
+    srv2 = ReusableHTTPServer(('127.0.0.1', port), Gr0gu3270Handler)
     srv2.server_close()
 
 def test_kill_port_owner_no_crash(h3270):
     """_kill_port_owner doesn't crash when no process holds the port."""
-    ui = Hack3270WebUI(h3270, port=0)
+    ui = Gr0gu3270WebUI(h3270, port=0)
     ui.port = 59999  # unlikely to be in use
     ui._kill_port_owner()  # should complete without error
 
 def test_find_pid_for_inode_not_found():
     """_find_pid_for_inode returns None for a bogus inode."""
-    assert Hack3270WebUI._find_pid_for_inode('9999999999') is None
+    assert Gr0gu3270WebUI._find_pid_for_inode('9999999999') is None
 
 
 # ---- Single Transaction Scan tests ----

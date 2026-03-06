@@ -1,4 +1,4 @@
-# Roadmap Recherche — hack3270 / Pentest CICS
+# Roadmap Recherche — Gr0gu3270 / Pentest CICS
 
 > Document de reference : `research/00-PROMPT-FONDATEUR.md`
 

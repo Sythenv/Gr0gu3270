@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
-import libhack3270
+import libGr0gu3270
 import argparse
 import logging
 
 def main():
 
-    desc = 'Hack3270 - The TN3270 Penetration Testing Toolkit'
+    desc = 'Gr0gu3270 - The TN3270 Penetration Testing Toolkit'
     epilog = '''Example:
     %(prog)s -n prod_lpar3 10.10.10.10 992 -l 31337 --proxy_ip 0.0.0.0 --debug
     %(prog)s -o'''
@@ -27,7 +27,7 @@ def main():
 
     args = arg_parser.parse_args()
 
-    hack3270 = libhack3270.hack3270(
+    Gr0gu3270 = libGr0gu3270.Gr0gu3270(
                  server_ip = args.IP,
                  server_port = args.PORT,
                  proxy_port=args.proxy_port,
@@ -40,7 +40,7 @@ def main():
     )
 
     # CLI proxy_port always wins over stale DB value
-    hack3270.proxy_port = args.proxy_port
+    Gr0gu3270.proxy_port = args.proxy_port
 
     if args.ui == 'tk':
         import tk
@@ -58,24 +58,24 @@ def main():
                     "map":       {"background": [("selected", "light grey"), ('disabled','grey')],
                                 "expand": [("selected", [1, 1, 1, 0])] } } } )
         style.theme_use("hackallthethings")
-        my_gui = tk.tkhack3270(root, style, hack3270, logfile=None,loglevel=args.loglevel)
+        my_gui = tk.tkGr0gu3270(root, style, Gr0gu3270, logfile=None,loglevel=args.loglevel)
     else:
         import web
         import threading
 
-        ui = web.Hack3270WebUI(hack3270, port=args.web_port)
+        ui = web.Gr0gu3270WebUI(Gr0gu3270, port=args.web_port)
 
-        if not hack3270.is_offline():
+        if not Gr0gu3270.is_offline():
             def connect_proxy():
                 print("Waiting for TN3270 connection on {}:{}...".format(
-                    hack3270.proxy_ip, hack3270.proxy_port))
-                hack3270.client_connect()
+                    Gr0gu3270.proxy_ip, Gr0gu3270.proxy_port))
+                Gr0gu3270.client_connect()
                 print("Client connected.")
                 # Wrap client socket for non-blocking sends
-                hack3270.client = web.NonBlockingClientSocket(hack3270.client)
-                hack3270.server_connect()
+                Gr0gu3270.client = web.NonBlockingClientSocket(Gr0gu3270.client)
+                Gr0gu3270.server_connect()
                 print("Server connected.")
-                hack3270.check_inject_3270e()
+                Gr0gu3270.check_inject_3270e()
                 ui.state.connection_ready.set()
 
             t = threading.Thread(target=connect_proxy, daemon=True)

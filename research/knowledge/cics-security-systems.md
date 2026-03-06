@@ -30,6 +30,6 @@ Lors d'une violation de securite, le message retourne identifie l'ESM :
 ## Techniques de pentest
 
 1. **Enumeration de l'ESM** : provoquer une violation intentionnelle, analyser le message
-2. **Audit differentiel** : comparer les acces entre profils (PR4 de hack3270)
+2. **Audit differentiel** : comparer les acces entre profils (PR4 de Gr0gu3270)
 3. **Escalade horizontale** : trouver des transactions accessibles qui ne devraient pas l'etre
 4. **Escalade verticale** : identifier des transactions admin accessibles a un user normal
