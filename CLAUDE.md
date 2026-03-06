@@ -37,7 +37,7 @@ python3 Gr0gu3270.py -t 10.10.10.10 3270                # TLS
 python3 Gr0gu3270.py --ui tk 10.10.10.10 3270           # Tkinter UI
 python3 Gr0gu3270.py --web-port 1337 10.10.10.10 3270   # web port custom
 python3 Gr0gu3270.py -o                                 # offline (analyse depuis DB)
-python3 -m pytest tests/ -v                            # tests unitaires (137 tests)
+python3 -m pytest tests/ -v                            # tests unitaires (146 tests)
 ```
 
 Python 3.11+ avec tkinter. Zero dependance externe.
@@ -87,7 +87,7 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 ### Directories
 
 - `injections/` — 16 wordlists fuzzing (alpha, numeric, CICS transactions, DB2 injections)
-- `tests/` — 137 tests unitaires pytest (test_core.py + test_web.py)
+- `tests/` — 146 tests unitaires pytest (test_core.py + test_web.py)
 - `research/` — Journal, findings, knowledge base, post-mortems
 - `framework/` — Template CLAUDE.md + script init-research.sh
 - `docs/` — Documentation humaine (STAKEHOLDERS.md)
