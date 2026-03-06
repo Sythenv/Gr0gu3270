@@ -479,6 +479,167 @@ class TestAidScanDB:
         assert len(since_rows) == 2
 
 
+# ---- AID Scan: DVCA Benchmark ----
+
+class MockSocket:
+    """Fake socket that records sends and returns nothing."""
+    def __init__(self):
+        self.sent = []
+    def send(self, data):
+        self.sent.append(data)
+    def flush(self):
+        pass
+
+class TestAidScanDVCA:
+    """Benchmark aid_scan_next() against simulated DVCA scenarios."""
+
+    def _setup_scan(self, h3270, ref_text="MCMM MAIN MENU OPTION ==>"):
+        """Prepare h3270 for AID scan with mocked sockets and ref screen."""
+        ref_screen = ascii_to_ebcdic(ref_text)
+        h3270.write_database_log('C', 'clear', b'\x6d\xff\xef')
+        h3270.write_database_log('S', 'ref', ref_screen)
+        h3270.aid_scan_start()
+        h3270.client = MockSocket()
+        h3270.server = MockSocket()
+        return ref_screen
+
+    def test_same_screen_green(self, h3270):
+        """DVCA: PF7 on MCMM — same screen returned, replay OK."""
+        ref = self._setup_scan(h3270)
+        # AID key returns same screen, replay returns same screen
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: ref
+        h3270.aid_scan_replay = lambda: ref
+        result = h3270.aid_scan_next()
+        assert result['category'] == 'SAME_SCREEN'
+        assert result['replay_ok'] is True
+
+    def test_new_screen_replay_ok(self, h3270):
+        """DVCA: ENTER with option 1 — navigates to MCOR, replay returns to MCMM."""
+        ref = self._setup_scan(h3270)
+        mcor_screen = ascii_to_ebcdic("MCOR ORDER SUPPLY ITEM NAME PRICE")
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: mcor_screen
+        h3270.aid_scan_replay = lambda: ref
+        result = h3270.aid_scan_next()
+        assert result['category'] == 'NEW_SCREEN'
+        assert result['replay_ok'] is True
+
+    def test_timeout_replay_ok(self, h3270):
+        """DVCA: PA3 ignored — no response, replay still works."""
+        ref = self._setup_scan(h3270)
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: None
+        h3270.aid_scan_replay = lambda: ref
+        result = h3270.aid_scan_next()
+        assert result['category'] == 'TIMEOUT'
+        assert result['replay_ok'] is True
+
+    def test_violation_abend_replay_ok(self, h3270):
+        """DVCA: key triggers ABEND, but replay recovers."""
+        ref = self._setup_scan(h3270)
+        abend_screen = ascii_to_ebcdic("DFHAC2001 ASRA IN PROGRAM TESTPGM")
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: abend_screen
+        h3270.aid_scan_replay = lambda: ref
+        result = h3270.aid_scan_next()
+        assert result['category'] == 'VIOLATION'
+        assert result['replay_ok'] is True
+
+    def test_session_kill_double_fail(self, h3270):
+        """DVCA: PF3 kills KICKS session — replay fails, recovery fails, remaining SKIPPED."""
+        ref = self._setup_scan(h3270)
+        dead_screen = ascii_to_ebcdic("TSO READY")
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: dead_screen
+        h3270.aid_scan_replay = lambda: dead_screen  # always returns wrong screen
+        result = h3270.aid_scan_next()
+        # First key: tested, red dot
+        assert result['replay_ok'] is False
+        # Scan stopped
+        assert h3270.aid_scan_running is False
+        # All 28 results present (1 tested + 27 SKIPPED)
+        assert len(h3270.aid_scan_results) == 28
+        skipped = [r for r in h3270.aid_scan_results if r['category'] == 'SKIPPED']
+        assert len(skipped) == 27
+        assert all(not r['replay_ok'] for r in skipped)
+
+    def test_transient_fail_recovery_succeeds(self, h3270):
+        """DVCA: slow mainframe — first replay fails, recovery succeeds, scan continues."""
+        ref = self._setup_scan(h3270)
+        bad_screen = ascii_to_ebcdic("LOADING PLEASE WAIT")
+        # Track replay calls: first 2 return bad screen (initial try_replay),
+        # next 2 return ref screen (recovery try_replay)
+        call_count = [0]
+        def mock_replay():
+            call_count[0] += 1
+            return bad_screen if call_count[0] <= 2 else ref
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: ref
+        h3270.aid_scan_replay = mock_replay
+        result = h3270.aid_scan_next()
+        assert result['replay_ok'] is False  # initial replay failed
+        assert h3270.aid_scan_running is True  # but scan continues (recovered)
+        # No SKIPPED results
+        skipped = [r for r in h3270.aid_scan_results if r['category'] == 'SKIPPED']
+        assert len(skipped) == 0
+
+    def test_replay_none_double_fail(self, h3270):
+        """DVCA: server completely dead — replay returns None, double fail."""
+        ref = self._setup_scan(h3270)
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: None
+        h3270.aid_scan_replay = lambda: None  # dead
+        result = h3270.aid_scan_next()
+        assert result['category'] == 'TIMEOUT'
+        assert result['replay_ok'] is False
+        assert h3270.aid_scan_running is False
+        skipped = [r for r in h3270.aid_scan_results if r['category'] == 'SKIPPED']
+        assert len(skipped) == 27
+
+    def test_dynamic_content_still_matches(self, h3270):
+        """DVCA: timestamp changes between ref and replay — similarity still > 0.8."""
+        ref = self._setup_scan(h3270, "MCMM MAIN MENU OPTION ==> TIME 10:30:00")
+        # Same screen but timestamp changed (5 chars diff out of 39)
+        replay_screen = ascii_to_ebcdic("MCMM MAIN MENU OPTION ==> TIME 10:31:15")
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: ref
+        h3270.aid_scan_replay = lambda: replay_screen
+        result = h3270.aid_scan_next()
+        assert result['replay_ok'] is True
+
+    def test_multiple_keys_sequence(self, h3270):
+        """DVCA: scan 3 keys — 2 OK then session kill — verify sequence."""
+        ref = self._setup_scan(h3270)
+        dead_screen = ascii_to_ebcdic("TSO READY")
+        call_count = [0]
+        def mock_send(payload, timeout=2):
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                return ref  # first 2 keys: same screen
+            return dead_screen  # 3rd key: session dies
+        h3270._aid_scan_send_and_read = mock_send
+        # Replay: works for first 2, fails after 3rd
+        replay_count = [0]
+        def mock_replay():
+            replay_count[0] += 1
+            # First 2 keys succeed (2 replay calls each at most)
+            # After key 3: all replays return dead screen
+            if call_count[0] <= 2:
+                return ref
+            return dead_screen
+        h3270.aid_scan_replay = mock_replay
+
+        r1 = h3270.aid_scan_next()
+        assert r1['replay_ok'] is True
+        assert h3270.aid_scan_running is True
+
+        r2 = h3270.aid_scan_next()
+        assert r2['replay_ok'] is True
+        assert h3270.aid_scan_running is True
+
+        r3 = h3270.aid_scan_next()
+        assert r3['replay_ok'] is False
+        assert h3270.aid_scan_running is False
+
+        # 3 tested + 25 skipped = 28
+        assert len(h3270.aid_scan_results) == 28
+        tested = [r for r in h3270.aid_scan_results if r['category'] != 'SKIPPED']
+        assert len(tested) == 3
+
+
 # ---- PR6: Multi-Field Payload ----
 
 class TestBuildMultiFieldPayload:
