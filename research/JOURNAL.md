@@ -16,6 +16,14 @@ Categories :
 
 ---
 
+## 2026-03-06
+
+2026-03-06 10:00 : [TOOL] Rebrand complet hack3270 → Gr0gu3270. Rename fichiers (hack3270.py → Gr0gu3270.py, libhack3270.py → libGr0gu3270.py), classes, 242 occurrences dans 21 fichiers. Docs, tests, bat Windows mis a jour.
+
+2026-03-06 10:01 : [TOOL] Ajout art braille Grogu dans le header Web UI (cote gauche, couleur #00969a). Source : refacto_grogu/banner.txt (19 lignes braille unicode). Fix alignement : espaces ASCII remplaces par braille blanks, toutes lignes normalisees a 58 chars.
+
+2026-03-06 10:02 : [TOOL] Refonte layout header : fusion header + toolbar en un seul bandeau. Grogu a gauche, titre + status + boutons toolbar + toggles sur une seule ligne en bas. Splash simplifie (titre + status connecting uniquement).
+
 ## 2026-03-04
 
 2026-03-04 00:01 : [TOOL] Implementation des 4 features CICS audit : PR1 ABEND Detection (20 codes + DFH prefixes), PR2 Screen Map BMS (SBA/SF/SFE decode), PR3 Transaction Correlation (detect txn code + timing), PR4 Security Audit (25 violation patterns RACF/ACF2/TSS, classify_response). ~600 LOC dans libGr0gu3270.py + tk.py.
