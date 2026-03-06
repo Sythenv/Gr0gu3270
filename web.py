@@ -1541,7 +1541,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
           <div id="fuzz-summary" style="margin-top:4px;color:var(--dim);font-size:12px"></div>
         </div>
       </div>
-      <table><thead><tr>
+      <table><thead><tr id="smap-thead">
         <th style="text-align:center">H</th><th style="text-align:center">N</th><th>Len</th><th>Content</th>
       </tr></thead><tbody id="smap-table"></tbody></table>
     </div>
@@ -2146,9 +2146,14 @@ async function loadScreenMap() {
 }
 
 function renderScreenMap() {
+  const thead = document.getElementById('smap-thead');
   const tbody = document.getElementById('smap-table');
+  thead.innerHTML = smapShowAll
+    ? '<th>Pos</th><th style="text-align:center">H</th><th style="text-align:center">N</th><th>Len</th><th>Content</th>'
+    : '<th style="text-align:center">H</th><th style="text-align:center">N</th><th>Len</th><th>Content</th>';
   tbody.innerHTML = '';
   selectedFuzzFields = [];
+  const dot = '<span style="display:block;margin:auto;width:8px;height:8px;border-radius:50%;background:var(--text)"></span>';
   smapData.forEach((f, i) => {
     const isInput = !f.protected;
     const isHidden = f.hidden;
@@ -2161,8 +2166,8 @@ function renderScreenMap() {
       tr.style.cursor = 'pointer';
       tr.onclick = () => toggleFuzzField(tr, f);
     }
-    const dot = '<span style="display:block;margin:auto;width:8px;height:8px;border-radius:50%;background:var(--text)"></span>';
-    tr.innerHTML = '<td>'+(f.hidden?dot:'')+'</td><td>'+(f.numeric?dot:'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
+    const pos = smapShowAll ? '<td>'+f.row+','+f.col+'</td>' : '';
+    tr.innerHTML = pos+'<td>'+(f.hidden?dot:'')+'</td><td>'+(f.numeric?dot:'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
     tbody.appendChild(tr);
   });
   updateFuzzButton();
