@@ -2168,10 +2168,17 @@ class Gr0gu3270:
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         if self.tls_enabled:
-            self.logger.debug(self.tls_enabled)
             self.logger.debug("Connecting with TLS")
-            self.context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
-            self.server = self.context.wrap_socket(server_sock)
+            self.context = ssl.create_default_context()
+            self.context.check_hostname = False
+            self.context.verify_mode = ssl.CERT_NONE
+            self.logger.warning("TLS certificate verification disabled (pentest mode)")
+            try:
+                self.server = self.context.wrap_socket(
+                    server_sock, server_hostname=self.server_ip)
+            except ssl.SSLError as e:
+                self.logger.error("TLS handshake failed: {}".format(e))
+                raise
         else:
             self.server = server_sock
 
