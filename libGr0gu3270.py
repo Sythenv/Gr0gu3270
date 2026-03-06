@@ -1700,20 +1700,7 @@ class Gr0gu3270:
                 aid_name, category), server_data)
 
         # Replay path to return to target screen + verify
-        replay_ok = False
-        for attempt in range(2):
-            replay_response = self.aid_scan_replay()
-            if replay_response:
-                self.client.send(replay_response)
-                sim = self.screen_similarity(replay_response, self.aid_scan_ref_screen)
-                if sim > 0.8:
-                    replay_ok = True
-                    break
-                self.logger.debug("AID scan: replay attempt {} for {} — similarity {:.0%}".format(
-                    attempt + 1, aid_name, sim))
-            else:
-                self.logger.debug("AID scan: replay attempt {} for {} — no response".format(
-                    attempt + 1, aid_name))
+        replay_ok = self._aid_scan_try_replay(aid_name)
 
         result['replay_ok'] = replay_ok
         self.aid_scan_results.append(result)
@@ -1723,9 +1710,17 @@ class Gr0gu3270:
         self.logger.debug("AID scan: {} -> {} (replay: {})".format(
             aid_name, result['category'], 'OK' if replay_ok else 'FAIL'))
 
-        # Stop-on-fail: mark remaining keys as SKIPPED
+        # Replay failed — recovery attempt
         if not replay_ok:
-            self.logger.debug("AID scan: replay failed for {} — skipping {} remaining keys".format(
+            self.logger.debug("AID scan: recovery attempt after {}...".format(aid_name))
+            time.sleep(0.5)
+            recovered = self._aid_scan_try_replay(aid_name)
+            if recovered:
+                self.logger.debug("AID scan: recovered after {} — continuing".format(aid_name))
+                return result
+
+            # DOUBLE FAIL — skip remaining keys
+            self.logger.debug("AID scan: DOUBLE FAIL after {} — skipping {} remaining keys".format(
                 aid_name, len(self.aid_scan_keys) - self.aid_scan_index))
             while self.aid_scan_index < len(self.aid_scan_keys):
                 skipped = {
@@ -1733,7 +1728,7 @@ class Gr0gu3270:
                     'category': 'SKIPPED',
                     'status': 'SKIPPED',
                     'similarity': 0.0,
-                    'response_preview': 'Skipped — replay failed after {}'.format(aid_name),
+                    'response_preview': 'Skipped — double fail after {}'.format(aid_name),
                     'response_len': 0,
                     'timestamp': time.time(),
                     'replay_ok': False,
@@ -1742,9 +1737,24 @@ class Gr0gu3270:
                 self.write_aid_scan_log(skipped)
                 self.aid_scan_index += 1
             self.aid_scan_running = False
-            return result
 
         return result
+
+    def _aid_scan_try_replay(self, aid_name):
+        '''Attempts replay twice, verifies screen similarity. Returns True if back on target.'''
+        for attempt in range(2):
+            replay_response = self.aid_scan_replay()
+            if replay_response:
+                self.client.send(replay_response)
+                sim = self.screen_similarity(replay_response, self.aid_scan_ref_screen)
+                if sim > 0.8:
+                    return True
+                self.logger.debug("AID scan: replay attempt {} for {} — similarity {:.0%}".format(
+                    attempt + 1, aid_name, sim))
+            else:
+                self.logger.debug("AID scan: replay attempt {} for {} — no response".format(
+                    attempt + 1, aid_name))
+        return False
 
     def write_aid_scan_log(self, result):
         '''Writes an AID scan result to the database.'''
