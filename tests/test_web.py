@@ -113,7 +113,6 @@ def test_get_aids(state):
 
 def test_get_inject_status(state):
     s = state.get_inject_status()
-    assert s['config_set'] is False
     assert s['running'] is False
 
 def test_get_injection_files(state):
@@ -141,18 +140,6 @@ def test_toggle_transaction_tracking(state):
     # Enabled by default
     r = state.toggle_transaction_tracking()
     assert r['on'] is False
-
-def test_inject_reset(state):
-    r = state.inject_reset()
-    assert r['ok'] is True
-
-def test_inject_file_missing(state):
-    r = state.set_inject_file({'filename': 'nonexistent.txt'})
-    assert r['ok'] is False
-
-def test_inject_go_no_file(state):
-    r = state.inject_go({})
-    assert r['ok'] is False
 
 def test_export_csv(state):
     r = state.export_csv()
@@ -224,7 +211,7 @@ def test_http_api_aids(web_server):
 
 def test_http_api_inject_status(web_server):
     data = get(web_server, '/api/inject_status')
-    assert 'config_set' in data
+    assert 'running' in data
 
 def test_http_api_injection_files(web_server):
     data = get(web_server, '/api/injection_files')
@@ -239,10 +226,6 @@ def test_http_post_hack_fields(web_server):
 def test_http_post_abend_detection(web_server):
     data = post_json(web_server, '/api/abend_detection')
     assert 'on' in data
-
-def test_http_post_inject_reset(web_server):
-    data = post_json(web_server, '/api/inject/reset')
-    assert data['ok'] is True
 
 def test_http_404(web_server):
     try:
@@ -429,35 +412,6 @@ def test_run_daemon_drains_queue(state):
         s2.close()
         state.connection_ready.clear()
 
-
-# ---- Inject worker queue test ----
-
-def test_inject_worker_uses_queue(state, tmp_path):
-    """_inject_worker puts injection payloads on _cmd_queue."""
-    # Create a small injection file
-    inject_file = tmp_path / "test_inject.txt"
-    inject_file.write_text("AAA\nBBB\n")
-    state.inject_filename = str(inject_file)
-
-    # Set up injection config so worker doesn't skip
-    with state.lock:
-        state.h.set_inject_config_set(1)
-        # We need preamble/postamble set — use minimal values
-        state.h.inject_preamble = b'\x00'
-        state.h.inject_postamble = b'\xff\xef'
-        state.h.inject_mask_len = 10
-
-    state._inject_worker('SKIP', 'ENTER')
-
-    # Worker should have queued commands (2 lines x ENTER key = 4 items)
-    items = []
-    while not state._cmd_queue.empty():
-        items.append(state._cmd_queue.get_nowait())
-    # At least 2 injection payloads (AAA, BBB) + 2 ENTER keys
-    assert len(items) >= 2
-    labels = [item[0] for item in items]
-    assert any('AAA' in l for l in labels)
-    assert any('BBB' in l for l in labels)
 
 
 # ---- PR6: Field Fuzzing ----

@@ -120,7 +120,6 @@ class Gr0gu3270State:
         self.last_abend_id = 0
         self.last_txn_id = 0
         self.last_audit_id = 0
-        self.inject_filename = ""
         self.inject_running = False
         self.inject_status_msg = "Not Ready."
         self.audit_thread = None
@@ -335,9 +334,7 @@ class Gr0gu3270State:
     def get_inject_status(self):
         with self.lock:
             return {
-                'config_set': bool(self.h.get_inject_config_set()),
                 'running': self.inject_running,
-                'filename': self.inject_filename,
                 'message': self.inject_status_msg,
                 'progress': self.fuzz_progress,
             }
@@ -371,112 +368,6 @@ class Gr0gu3270State:
             if 'on' in data:
                 self.h.set_hack_color_on(int(data['on']))
                 self.h.set_hack_color_toggled()
-
-    def set_inject_file(self, data):
-        filename = data.get('filename', '')
-        with self.lock:
-            if filename:
-                full_path = os.path.join('injections', filename)
-                if os.path.isfile(full_path):
-                    self.inject_filename = full_path
-                    self.inject_status_msg = "Filename set to: " + full_path
-                    return {'ok': True, 'message': self.inject_status_msg}
-            self.inject_status_msg = "Error: file not set."
-            return {'ok': False, 'message': self.inject_status_msg}
-
-    def inject_setup(self):
-        with self.lock:
-            mask = '*'
-            self.h.set_inject_mask(mask)
-            self.h.set_inject_setup_capture()
-            self.inject_status_msg = "Submit data using mask character of '{}' to setup injection.".format(mask)
-            return {'ok': True, 'message': self.inject_status_msg}
-
-    def inject_setup_with_mask(self, data):
-        with self.lock:
-            mask = data.get('mask', '*')
-            self.h.set_inject_mask(mask)
-            self.h.set_inject_setup_capture()
-            self.inject_status_msg = "Submit data using mask character of '{}' to setup injection.".format(mask)
-            return {'ok': True, 'message': self.inject_status_msg}
-
-    def inject_go(self, data):
-        if self.inject_running:
-            return {'ok': False, 'message': 'Injection already running.'}
-
-        with self.lock:
-            if not self.inject_filename:
-                self.inject_status_msg = "Injection file not set. Select a file first."
-                return {'ok': False, 'message': self.inject_status_msg}
-            if not self.h.get_inject_config_set():
-                self.inject_status_msg = "Field for injection hasn't been setup. Click SETUP."
-                return {'ok': False, 'message': self.inject_status_msg}
-
-        trunc_mode = data.get('trunc', 'SKIP')
-        key_mode = data.get('key', 'ENTER')
-
-        self.inject_running = True
-        self.inject_thread = threading.Thread(
-            target=self._inject_worker, args=(trunc_mode, key_mode), daemon=True)
-        self.inject_thread.start()
-        return {'ok': True, 'message': 'Injection started.'}
-
-    def _inject_worker(self, trunc_mode, key_mode):
-        try:
-            with open(self.inject_filename, 'r') as f:
-                lines = f.readlines()
-
-            for line in lines:
-                if self.shutdown_flag.is_set():
-                    break
-                line = line.rstrip()
-                if not line:
-                    continue
-
-                # Build payload under lock (fast, no I/O)
-                with self.lock:
-                    mask_len = self.h.get_inject_mask_len()
-                    if trunc_mode == 'TRUNC':
-                        line = line[:mask_len]
-                    if len(line) <= mask_len:
-                        injection_ebcdic = self.h.get_ebcdic(line)
-                        bytes_ebcdic = self.h.get_inject_preamble() + injection_ebcdic + self.h.get_inject_postamble()
-                        is_tn3270e = self.h.check_inject_3270e()
-                    else:
-                        continue
-                    self.inject_status_msg = "Sending: " + line
-
-                # Queue the injection payload + follow-up keys via command queue
-                # The daemon thread handles all socket I/O
-                self._cmd_queue.put(('Sending: ' + line, bytes_ebcdic))
-
-                if key_mode == 'ENTER+CLEAR':
-                    aid = b'\x6d'
-                    payload = (b'\x00\x00\x00\x00\x01' + aid + b'\xff\xef') if is_tn3270e else (aid + b'\xff\xef')
-                    self._cmd_queue.put(('Sending key: CLEAR', payload))
-                elif key_mode == 'ENTER+PF3':
-                    aid = b'\xf3'
-                    payload = (b'\x00\x00\x00\x00\x01' + aid + b'\xff\xef') if is_tn3270e else (aid + b'\xff\xef')
-                    self._cmd_queue.put(('Sending key: PF3', payload))
-                elif key_mode == 'ENTER+PF3+CLEAR':
-                    for name, aid in [('PF3', b'\xf3'), ('CLEAR', b'\x6d')]:
-                        payload = (b'\x00\x00\x00\x00\x01' + aid + b'\xff\xef') if is_tn3270e else (aid + b'\xff\xef')
-                        self._cmd_queue.put(('Sending key: ' + name, payload))
-
-                # Let daemon thread drain the queue and process responses
-                time.sleep(0.3)
-
-        except Exception as e:
-            self.inject_status_msg = "Injection error: {}".format(e)
-        finally:
-            self.inject_running = False
-            self.inject_status_msg = "Injection complete."
-
-    def inject_reset(self):
-        with self.lock:
-            self.h.set_inject_config_set(0)
-            self.inject_status_msg = "Configuration cleared."
-            return {'ok': True, 'message': self.inject_status_msg}
 
     def fuzz_go(self, data):
         if self.inject_running:
@@ -1245,18 +1136,6 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
         elif path == '/api/hack_color':
             self.state.set_hack_color(data)
             self._send_json({'ok': True})
-        elif path == '/api/inject/file':
-            result = self.state.set_inject_file(data)
-            self._send_json(result)
-        elif path == '/api/inject/setup':
-            result = self.state.inject_setup_with_mask(data)
-            self._send_json(result)
-        elif path == '/api/inject/go':
-            result = self.state.inject_go(data)
-            self._send_json(result)
-        elif path == '/api/inject/reset':
-            result = self.state.inject_reset()
-            self._send_json(result)
         elif path == '/api/send_keys':
             result = self.state.send_keys(data)
             self._send_json(result)

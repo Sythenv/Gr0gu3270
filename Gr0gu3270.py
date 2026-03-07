@@ -20,7 +20,6 @@ def main():
     arg_parser.add_argument('-t', '--tls', help="Enable TLS encryption for server connection (default: %(default)s)", action="store_true", default=False)
     arg_parser.add_argument('-o', '--offline', help="Offline log analysis mode (default: %(default)s)", action="store_true", default=False)
     arg_parser.add_argument('-d', '--debug', help="Print debugging statements (default: %(default)s)", action="store_const", dest="loglevel", const=logging.DEBUG, default=logging.WARNING)
-    arg_parser.add_argument('--ui', choices=['web', 'tk'], default='web', help="UI mode: web (default) or tk")
     arg_parser.add_argument('--web-port', type=int, default=8080, help="Web UI port (default: %(default)s)")
     arg_parser.add_argument('--macro', help="Macro file to run on startup (from macros/ dir)", default=None)
     arg_parser.add_argument("IP", help="TN3270 server IP address")
@@ -43,51 +42,33 @@ def main():
     # CLI proxy_port always wins over stale DB value
     Gr0gu3270.proxy_port = args.proxy_port
 
-    if args.ui == 'tk':
-        import tk
-        from tkinter import Tk
-        from tkinter import ttk
+    import web
+    import threading
 
-        root = Tk()
-        style = ttk.Style()
-        style.theme_create( "hackallthethings", parent="alt", settings={
-                "TButton": {"configure": {"background": "light grey" , "anchor": "center", "relief": "solid"} },
-                "Treeview": {"configure": {"background": "white" } },
-                "TNotebook": {"configure": {"tabmargins": [2, 5, 2, 0] } },
-                "TNotebook.Tab": {
-                    "configure": {"padding": [5, 1], "background": "dark grey" },
-                    "map":       {"background": [("selected", "light grey"), ('disabled','grey')],
-                                "expand": [("selected", [1, 1, 1, 0])] } } } )
-        style.theme_use("hackallthethings")
-        my_gui = tk.tkGr0gu3270(root, style, Gr0gu3270, logfile=None,loglevel=args.loglevel)
-    else:
-        import web
-        import threading
+    ui = web.Gr0gu3270WebUI(Gr0gu3270, port=args.web_port)
 
-        ui = web.Gr0gu3270WebUI(Gr0gu3270, port=args.web_port)
-
-        if not Gr0gu3270.is_offline():
-            def connect_proxy():
-                print("Waiting for TN3270 connection on {}:{}...".format(
-                    Gr0gu3270.proxy_ip, Gr0gu3270.proxy_port))
-                Gr0gu3270.client_connect()
-                print("Client connected.")
-                # Wrap client socket for non-blocking sends
-                Gr0gu3270.client = web.NonBlockingClientSocket(Gr0gu3270.client)
-                Gr0gu3270.server_connect()
-                print("Server connected.")
-                Gr0gu3270.check_inject_3270e()
-                ui.state.connection_ready.set()
-                if args.macro:
-                    import time
-                    time.sleep(0.5)
-                    ui.state.macro_run({'file': args.macro})
-
-            t = threading.Thread(target=connect_proxy, daemon=True)
-            t.start()
-        else:
+    if not Gr0gu3270.is_offline():
+        def connect_proxy():
+            print("Waiting for TN3270 connection on {}:{}...".format(
+                Gr0gu3270.proxy_ip, Gr0gu3270.proxy_port))
+            Gr0gu3270.client_connect()
+            print("Client connected.")
+            # Wrap client socket for non-blocking sends
+            Gr0gu3270.client = web.NonBlockingClientSocket(Gr0gu3270.client)
+            Gr0gu3270.server_connect()
+            print("Server connected.")
+            Gr0gu3270.check_inject_3270e()
             ui.state.connection_ready.set()
+            if args.macro:
+                import time
+                time.sleep(0.5)
+                ui.state.macro_run({'file': args.macro})
 
-        ui.start()
+        t = threading.Thread(target=connect_proxy, daemon=True)
+        t.start()
+    else:
+        ui.state.connection_ready.set()
+
+    ui.start()
 
 main()

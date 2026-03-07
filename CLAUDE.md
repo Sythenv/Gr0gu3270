@@ -31,24 +31,22 @@ Gr0gu3270 — TN3270 penetration testing toolkit (v1.2.5-2, GPL-3.0). Proxy MitM
 ### Execution
 
 ```bash
-python3 Gr0gu3270.py <IP> <PORT>                        # standard (web UI par defaut)
+python3 Gr0gu3270.py <IP> <PORT>                        # standard (web UI)
 python3 Gr0gu3270.py -n myproject 10.10.10.10 3270      # project name
 python3 Gr0gu3270.py -t 10.10.10.10 3270                # TLS
-python3 Gr0gu3270.py --ui tk 10.10.10.10 3270           # Tkinter UI
 python3 Gr0gu3270.py --web-port 1337 10.10.10.10 3270   # web port custom
 python3 Gr0gu3270.py -o                                 # offline (analyse depuis DB)
 python3 Gr0gu3270.py --macro dvca-login.json 10.10.10.10 3270  # auto-run macro on connect
-python3 -m pytest tests/ -v                            # tests unitaires (161 tests)
+python3 -m pytest tests/ -v                            # tests unitaires (156 tests)
 ```
 
-Python 3.11+ avec tkinter. Zero dependance externe.
+Python 3.11+. Zero dependance externe.
 
 ### Architecture
 
-- `Gr0gu3270.py` — CLI entry point (93 lignes)
-- `libGr0gu3270.py` — Core library (~2860 lignes) : protocole 3270, EBCDIC, injection, ABEND detection, screen map, transactions, security audit, AID scan, SPOOL/RCE, macro engine, SQLite
-- `web.py` — Web UI (~2980 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 42 endpoints API
-- `tk.py` — GUI Tkinter (~1200 lignes), 11 onglets (0-6 originaux, 7 ABEND, 8 Screen Map, 9 Transactions, 10 Security Audit)
+- `Gr0gu3270.py` — CLI entry point (74 lignes)
+- `libGr0gu3270.py` — Core library (~2660 lignes) : protocole 3270, EBCDIC, injection, ABEND detection, screen map, transactions, security audit, AID scan, SPOOL/RCE, macro engine, SQLite
+- `web.py` — Web UI (~2930 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 38 endpoints API
 
 ### Data Flow
 
@@ -79,18 +77,15 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 ### Conventions
 
 - Network data = bytes EBCDIC. Conversion ASCII via `e2a` table.
-- Hack state : paired `toggle_*()` / `set_*()` methods.
+- Hack state : `set_*()` methods in libGr0gu3270.py.
 - Web mode : NonBlockingClientSocket + command queue. Lock pour state, I/O socket hors lock.
-- GUI ↔ core sync via Tk IntVar/StringVar.
 - TLS server-side only. Proxy→emulateur non chiffre (intentionnel).
-- Tab indices : 0-6 original, 7-10 PR features.
-- Offline mode : tabs 7-9 actifs, tab 10 desactive.
 
 ### Directories
 
 - `injections/` — 16 wordlists fuzzing (alpha, numeric, CICS transactions, DB2 injections)
 - `macros/` — Macro JSON files for automated navigation (dvca-login.json)
-- `tests/` — 161 tests unitaires pytest (test_core.py + test_web.py)
+- `tests/` — 156 tests unitaires pytest (test_core.py + test_web.py)
 - `research/` — Journal, findings, knowledge base, post-mortems
 - `framework/` — Template CLAUDE.md + script init-research.sh
 - `docs/` — Documentation humaine (STAKEHOLDERS.md)

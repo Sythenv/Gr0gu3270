@@ -582,37 +582,6 @@ class Gr0gu3270:
                 self.logger.debug("TN3270 Detected.")
                 return False
 
-    def check_server(self,record_id):
-
-        sql_text = "SELECT * FROM Logs WHERE ID=" + str(record_id)
-        self.sql_cur.execute(sql_text)
-        records = self.sql_cur.fetchall()
-        for row in records:
-            if row[2] == "S":
-                return True
-            else:
-                return False
-
-    def check_record(self, record_id):
-
-        sql_text = "SELECT * FROM Logs WHERE ID=" + str(record_id)
-        self.sql_cur.execute(sql_text)
-        records = self.sql_cur.fetchall()
-        for row in records:
-            # If the first character is 0xFF then this is a telnet handshake message
-            if row[5][0] == 255:
-                return True
-            else:
-                return False
-
-    def play_record(self,record_id):
-        
-        sql_text = "SELECT * FROM Logs WHERE ID=" + str(record_id)
-        self.sql_cur.execute(sql_text)
-        records = self.sql_cur.fetchall()
-        for row in records:
-            self.client.send(row[5])
-
     def export_csv(self,csv_filename=False):
         '''
         Writes the SQL logs to a CSV file
@@ -2219,18 +2188,6 @@ class Gr0gu3270:
             if self.audit_running and self.audit_current_txn:
                 self.audit_process_response(server_data)
 
-    def tend_server(self):
-        select_timeout = 1
-        while True:
-            my_rlist, w, e = select.select([self.server],[],[],select_timeout)
-            if self.server in my_rlist:
-                select_timeout = 0.2
-                server_data = self.server.recv(BUFFER_MAX)
-                self.handle_server(server_data)
-            else:
-                break
-        return
-
     def daemon(self):
 
         # Tend to client sending data
@@ -2328,15 +2285,6 @@ class Gr0gu3270:
     def recv(self):
         self.client.recv(BUFFER_MAX)
 
-    def send_server(self, data):
-        self.logger.debug("Sending Data to server: {}".format(data.hex()))
-        self.server.send(data)
-
-    def send_client(self, data):
-        self.logger.debug("Sending Data to client: {}".format(data.hex()))
-        self.client.send(data)
-    ####
-
     def expand_CS(self, text):
         '''
         The datase stores client and server communication as one byt
@@ -2349,17 +2297,6 @@ class Gr0gu3270:
         elif text == "S":
             return("Server")
         
-    def send_key(self, send_text, byte_code):
-        self.write_database_log('C', 'Sending key: ' + send_text, byte_code + b'\xff\xef')
-        if self.check_inject_3270e():
-            print("Sending as 3270E: " + send_text)
-            self.server.send(b'\x00\x00\x00\x00\x01' + byte_code + b'\xff\xef')
-        else:
-            print("Sending as 3270: " + send_text)
-            self.server.send(byte_code + b'\xff\xef')
-        self.tend_server()
-        return
-    
     def capture_mask(self, client_data):
 
         preamble_count = 0
