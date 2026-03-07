@@ -583,6 +583,15 @@ class Gr0gu3270State:
                         self.h.detect_transaction_code(payload)
                         similarity = self.h.screen_similarity(server_data, ref_screen) if ref_screen else -1
                         diff = self.h.screen_diff(ref_screen, server_data) if ref_screen else []
+                        # Extract ABEND code when classification is ABEND
+                        abend_code = None
+                        if classification == 'ABEND':
+                            abends = self.h.detect_abend(server_data)
+                            if abends:
+                                abend_code = abends[0]['code']
+                    # Distinguish navigation from same-screen acceptance
+                    if classification == 'ACCESSIBLE' and similarity >= 0 and similarity <= sim_threshold:
+                        classification = 'NAVIGATED'
                     try:
                         self.h.client.send(server_data)
                         self.h.client.flush()
@@ -591,17 +600,21 @@ class Gr0gu3270State:
                     self.fuzz_results.append({
                         'payload': line,
                         'status': classification,
+                        'abend_code': abend_code,
                         'size': len(server_data),
                         'similarity': round(similarity, 3),
                         'diff': diff,
+                        'recovered': False,
                     })
                 else:
                     self.fuzz_results.append({
                         'payload': line,
                         'status': 'NO_RESPONSE',
+                        'abend_code': None,
                         'size': 0,
                         'similarity': -1,
                         'diff': [],
+                        'recovered': False,
                     })
 
                 # Send follow-up keys
@@ -660,6 +673,9 @@ class Gr0gu3270State:
                                 break
                         else:
                             consecutive_fails = 0
+                            # Mark the last result as recovered
+                            if self.fuzz_results:
+                                self.fuzz_results[-1]['recovered'] = True
 
                 time.sleep(delay)
 
@@ -2423,7 +2439,7 @@ async function pollFuzzStatus() {
 }
 
 const FUZZ_STATUS_COLORS = {
-  ACCESSIBLE:'#4ec9b0',NEW_SCREEN:'#4ec9b0',ABEND:'#f44',DENIED:'#f90',
+  ACCESSIBLE:'#4ec9b0',NEW_SCREEN:'#4ec9b0',NAVIGATED:'#569cd6',ABEND:'#f44',DENIED:'#f90',
   NOT_FOUND:'var(--dim)',ERROR:'#f90',SAME_SCREEN:'var(--dim)',NO_RESPONSE:'#f44',UNKNOWN:'var(--dim)'
 };
 async function loadFuzzResults() {
@@ -2442,7 +2458,9 @@ async function loadFuzzResults() {
       const diffHtml = r.diff && r.diff.length > 0
         ? '<span class="fuzz-diff" title="'+r.diff.map(d=>'R'+d.row+': '+esc(d.got)).join('&#10;')+'">\u0394'+r.diff.length+'</span>'
         : '';
-      tr.innerHTML = '<td>'+esc(r.payload)+'</td><td style="color:'+col+'">'+r.status+'</td><td>'+sim+'</td><td>'+diffHtml+'</td>';
+      const statusText = r.abend_code ? r.status+' ('+r.abend_code+')' : r.status;
+      const recIcon = r.recovered ? ' <span title="Recovery needed" style="color:#4ec9b0">\u21bb</span>' : '';
+      tr.innerHTML = '<td>'+esc(r.payload)+'</td><td style="color:'+col+'">'+statusText+recIcon+'</td><td>'+sim+'</td><td>'+diffHtml+'</td>';
       tbody.appendChild(tr);
     }
     const parts = Object.entries(d.summary).map(([k,v]) => k+':'+v);

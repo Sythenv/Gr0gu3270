@@ -600,6 +600,106 @@ def test_fuzz_worker_lost_screen_stops(state, tmp_path):
     finally:
         del state.h._aid_scan_send_and_read
 
+def test_fuzz_navigated_status(state, tmp_path):
+    """When classification=ACCESSIBLE and similarity < threshold, status is NAVIGATED."""
+    from tests.test_core import ascii_to_ebcdic
+    inject_file = tmp_path / "fuzz_nav.txt"
+    inject_file.write_text("NAV\n")
+    fields = [{'row': 1, 'col': 10, 'length': 5}]
+
+    ref_data = ascii_to_ebcdic("ORIGINAL MENU SCREEN WITH OPTIONS 1 THROUGH 9 LIST")
+    state.h.write_database_log('S', 'ref', ref_data)
+
+    nav_screen = ascii_to_ebcdic("COMPLETELY DIFFERENT NAVIGATION TARGET SCREEN HERE")
+    call_count = [0]
+    def mock_send(payload, timeout=2):
+        call_count[0] += 1
+        # Call 1: fuzz payload → nav screen, Calls 2+: recovery → ref
+        if call_count[0] >= 2:
+            return ref_data
+        return nav_screen
+    state.h._aid_scan_send_and_read = mock_send
+
+    class FakeClient:
+        def send(self, data): pass
+        def flush(self): pass
+    state.h.client = FakeClient()
+    state.inject_running = True
+    state.fuzz_results = []
+
+    try:
+        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER', txn_code='MCOR')
+        assert len(state.fuzz_results) == 1
+        assert state.fuzz_results[0]['status'] == 'NAVIGATED'
+        assert state.fuzz_results[0]['recovered'] is True
+        assert state.fuzz_results[0]['abend_code'] is None
+    finally:
+        del state.h._aid_scan_send_and_read
+
+def test_fuzz_abend_code_in_results(state, tmp_path):
+    """When classification=ABEND, the abend_code field contains the code."""
+    from tests.test_core import ascii_to_ebcdic
+    inject_file = tmp_path / "fuzz_abend.txt"
+    inject_file.write_text("CRASH\n")
+    fields = [{'row': 1, 'col': 10, 'length': 5}]
+
+    ref_data = ascii_to_ebcdic("ORIGINAL MENU SCREEN WITH OPTIONS 1 THROUGH 9 LIST")
+    state.h.write_database_log('S', 'ref', ref_data)
+
+    abend_screen = ascii_to_ebcdic("DFHAC2206 TRANSACTION ABEND AEI9 HAS OCCURRED QUIT")
+    def mock_send(payload, timeout=2):
+        return abend_screen
+    state.h._aid_scan_send_and_read = mock_send
+
+    class FakeClient:
+        def send(self, data): pass
+        def flush(self): pass
+    state.h.client = FakeClient()
+    state.inject_running = True
+    state.fuzz_results = []
+
+    try:
+        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER', txn_code='MCOR')
+        assert len(state.fuzz_results) == 1
+        assert state.fuzz_results[0]['status'] == 'ABEND'
+        assert state.fuzz_results[0]['abend_code'] == 'AEI9'
+    finally:
+        del state.h._aid_scan_send_and_read
+
+def test_fuzz_recovered_flag(state, tmp_path):
+    """After successful recovery, the result has recovered=True."""
+    from tests.test_core import ascii_to_ebcdic
+    inject_file = tmp_path / "fuzz_rec.txt"
+    inject_file.write_text("BAD\n")
+    fields = [{'row': 1, 'col': 10, 'length': 10}]
+
+    ref_data = ascii_to_ebcdic("CICS MENU SELECT OPTION 1-9 PF KEYS AVAILABLE NOW")
+    state.h.write_database_log('S', 'ref', ref_data)
+
+    diff_screen = ascii_to_ebcdic("COMPLETELY DIFFERENT SCREEN CONTENT HERE NOW TODAY")
+    call_count = [0]
+    def mock_send(payload, timeout=2):
+        call_count[0] += 1
+        # Call 1: fuzz payload → different screen, Calls 2-3: recovery → ref
+        if call_count[0] >= 3:
+            return ref_data
+        return diff_screen
+    state.h._aid_scan_send_and_read = mock_send
+
+    class FakeClient:
+        def send(self, data): pass
+        def flush(self): pass
+    state.h.client = FakeClient()
+    state.inject_running = True
+    state.fuzz_results = []
+
+    try:
+        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER', txn_code='MCOR')
+        assert len(state.fuzz_results) == 1
+        assert state.fuzz_results[0]['recovered'] is True
+    finally:
+        del state.h._aid_scan_send_and_read
+
 def test_fuzz_stop(state):
     """fuzz_stop clears running flag."""
     state.inject_running = True
