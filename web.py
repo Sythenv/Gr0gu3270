@@ -1210,7 +1210,7 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 /* Collapsible panels */
 .panel-screen { max-height: 25vh; flex-shrink: 0; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; transition: max-height 0.2s; }
 .panel-screen.collapsed { max-height: 26px; }
-.panel-findings { flex-shrink:0; max-height:140px; border-bottom:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+.panel-findings { flex:1; min-height:120px; border-bottom:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
 .panel-findings .panel-body { overflow-y:auto; flex:1; min-height:0; }
 .panel-header { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: var(--head); color: var(--bg); cursor: pointer; flex-shrink: 0; font-weight: bold; font-size: 18px; text-transform: uppercase; letter-spacing: 0.5px; text-shadow: none; }
 .panel-header:hover { opacity: 0.9; }
@@ -1276,7 +1276,8 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 .fuzz-popup .fuzz-controls { display:flex;gap:8px;align-items:center;margin-bottom:8px; }
 .fuzz-popup .fuzz-progress { height:4px;background:var(--border);border-radius:2px;margin-bottom:8px; }
 .fuzz-popup .fuzz-progress-fill { height:100%;background:var(--head);border-radius:2px;width:0%;transition:width 0.3s; }
-.fuzz-popup table { width:100%; }
+.fuzz-popup table { width:100%;table-layout:fixed; }
+.fuzz-popup td { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .fuzz-popup .fuzz-summary { margin-top:4px;color:var(--dim);font-size:12px; }
 .field-input:hover { background: rgba(0,150,154,0.2); }
 .btn { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 17px; transition: all 0.15s; }
@@ -1417,6 +1418,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
           <button class="btn danger" id="macro-stop-btn" onclick="macroStop()" style="display:none;font-size:15px;padding:2px 8px">STOP</button>
           <span id="macro-status" style="font-size:13px;color:var(--dim)"></span>
         </div>
+        <button class="btn" onclick="openAidScanPopup()" style="font-size:15px;padding:2px 8px">AID SCAN</button>
       </div>
       <div class="toggles">
         <div class="toggle-pill" id="tgl-hack" onclick="toggleHackFields()" title="Hack Fields">H</div>
@@ -1494,14 +1496,13 @@ const ACTIONS = [
   {id:'hack-fields', label:'Hack Fields', group:0},
   {id:'hack-color', label:'Hack Color', group:0},
   {id:'inject-keys', label:'Send Keys', group:0},
-  {id:'aid-scan', label:'AID Scan', group:0},
   {id:'spool', label:'SPOOL/RCE', group:1},
   {id:'logs', label:'Logs', group:2, tall:true},
   {id:'statistics', label:'Stats', group:2},
 ];
 
 const GROUPS = [
-  {id:'grp-hacks', label:'HACKS', items:['hack-fields','hack-color','inject-keys','aid-scan'], location:'top'},
+  {id:'grp-hacks', label:'HACKS', items:['hack-fields','hack-color','inject-keys'], location:'top'},
   {id:'grp-system', label:'SYSTEM', items:['spool'], location:'top'},
   {id:'grp-data', label:'DATA', items:['logs','statistics'], location:'top'},
 ];
@@ -1817,24 +1818,7 @@ function buildActionPanels() {
     </div>
     <div class="controls checkbox-grid" id="aid-checkboxes"></div>`;
 
-  // AID Scan
-  document.getElementById('apanel-aid-scan').innerHTML = `
-    <div class="controls">
-      <button class="btn" id="aid-scan-btn" onclick="aidScanStart()">AID SCAN</button>
-      <button class="btn danger" id="aid-scan-stop-btn" onclick="aidScanStop()" style="display:none">STOP</button>
-      <span id="aid-scan-progress" style="font-size:17px;color:var(--dim);margin-left:8px"></span>
-    </div>
-    <p style="font-size:15px;color:var(--dim);margin:4px 0 8px 0">Navigate to a screen in your emulator, then click AID SCAN. Tests 24 keys (ENTER, PF1-2, PF4-24) and auto-returns to screen.</p>
-    <div id="aid-scan-summary" style="display:none;margin-bottom:8px;gap:12px;font-size:18px">
-      <span style="color:var(--alert)"><b id="as-violation">0</b> VIOLATION</span>
-      <span style="color:var(--head)"><b id="as-new">0</b> NEW SCREEN</span>
-      <span style="color:var(--dim)"><b id="as-same">0</b> SAME</span>
-      <span style="color:var(--dim)"><b id="as-timeout">0</b> TIMEOUT</span>
-      <span style="color:var(--dim)"><b id="as-skipped">0</b> SKIPPED</span>
-    </div>
-    <table style="margin-top:4px"><thead><tr>
-      <th style="text-align:center">R</th><th>Key</th><th>Category</th>
-    </tr></thead><tbody id="aid-scan-table"></tbody></table>`;
+  // AID Scan — moved to popup (openAidScanPopup)
 
   // SPOOL/RCE
   document.getElementById('apanel-spool').innerHTML = `
@@ -2121,8 +2105,48 @@ async function exportCsv() {
   document.getElementById('export-status').textContent = r.ok ? 'Exported: '+r.filename : 'Failed.';
 }
 
-// ---- AID Scan ----
+// ---- AID Scan (popup) ----
 let aidScanPoller = null;
+const CAT_COLORS = {VIOLATION:C.alert,NEW_SCREEN:C.text,SAME_SCREEN:C.dim,TIMEOUT:C.dim,SKIPPED:C.dim};
+
+function openAidScanPopup() {
+  if (document.getElementById('aid-scan-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'aid-scan-overlay';
+  overlay.className = 'fuzz-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) closeAidScanPopup(); };
+  overlay.innerHTML = `<div class="fuzz-popup">
+    <h3>AID Scan</h3>
+    <p style="font-size:14px;color:var(--dim);margin:0 0 8px 0">Tests 24 keys (ENTER, PF1-2, PF4-24) on current screen with auto-replay.</p>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <button class="btn" id="aid-scan-btn" onclick="aidScanStart()">START</button>
+      <button class="btn danger" id="aid-scan-stop-btn" onclick="aidScanStop()" style="display:none">STOP</button>
+      <button class="btn" onclick="closeAidScanPopup()" style="margin-left:auto">\u2715</button>
+    </div>
+    <div id="aid-scan-status" style="color:var(--dim);margin-bottom:4px"></div>
+    <div class="fuzz-progress" id="aid-scan-progress-bar" style="display:none"><div class="fuzz-progress-fill" id="aid-scan-progress-fill"></div></div>
+    <div id="aid-scan-summary" style="display:none;margin-bottom:8px;gap:12px;font-size:16px">
+      <span style="color:var(--alert)"><b id="as-violation">0</b> VIOLATION</span>
+      <span style="color:var(--head)"><b id="as-new">0</b> NEW</span>
+      <span style="color:var(--dim)"><b id="as-same">0</b> SAME</span>
+      <span style="color:var(--dim)"><b id="as-timeout">0</b> TIMEOUT</span>
+      <span style="color:var(--dim)"><b id="as-skipped">0</b> SKIP</span>
+    </div>
+    <div style="max-height:400px;overflow-y:auto">
+      <table style="table-layout:fixed;width:100%"><thead><tr>
+        <th style="width:24px;text-align:center">R</th><th style="width:70px">Key</th><th>Category</th>
+      </tr></thead><tbody id="aid-scan-table"></tbody></table>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function closeAidScanPopup() {
+  const el = document.getElementById('aid-scan-overlay');
+  if (el) el.remove();
+  // don't stop poller — scan continues in background, popup can be reopened
+}
+
 async function aidScanStart() {
   const r = await post('/api/aid_scan/start');
   if (!r.ok) { toast(r.message, 'error'); return; }
@@ -2130,53 +2154,68 @@ async function aidScanStart() {
   document.getElementById('aid-scan-btn').style.display = 'none';
   document.getElementById('aid-scan-stop-btn').style.display = '';
   document.getElementById('aid-scan-table').innerHTML = '';
+  const pb = document.getElementById('aid-scan-progress-bar');
+  if (pb) pb.style.display = '';
+  const sum = document.getElementById('aid-scan-summary');
+  if (sum) sum.style.display = 'flex';
   aidScanPoller = setInterval(aidScanPoll, 1000);
 }
+
 async function aidScanStop() {
   await post('/api/aid_scan/stop');
   if (aidScanPoller) { clearInterval(aidScanPoller); aidScanPoller = null; }
-  document.getElementById('aid-scan-btn').style.display = '';
-  document.getElementById('aid-scan-stop-btn').style.display = 'none';
-  document.getElementById('aid-scan-progress').textContent = 'Stopped';
+  const btn = document.getElementById('aid-scan-btn');
+  const stop = document.getElementById('aid-scan-stop-btn');
+  const st = document.getElementById('aid-scan-status');
+  if (btn) btn.style.display = '';
+  if (stop) stop.style.display = 'none';
+  if (st) st.textContent = 'Stopped';
 }
-const CAT_COLORS = {VIOLATION:C.alert,NEW_SCREEN:C.text,SAME_SCREEN:C.dim,TIMEOUT:C.dim,SKIPPED:C.dim};
-const CAT_ORDER = {VIOLATION:0,NEW_SCREEN:1,TIMEOUT:2,SAME_SCREEN:3,SKIPPED:4};
+
 async function aidScanPoll() {
   const r = await fetch('/api/aid_scan/summary').then(r=>r.json());
   const s = r.summary || {};
-  document.getElementById('as-violation').textContent = s.VIOLATION||0;
-  document.getElementById('as-new').textContent = s.NEW_SCREEN||0;
-  document.getElementById('as-same').textContent = s.SAME_SCREEN||0;
-  document.getElementById('as-timeout').textContent = s.TIMEOUT||0;
-  document.getElementById('as-skipped').textContent = s.SKIPPED||0;
-  document.getElementById('aid-scan-progress').textContent = r.progress+'/'+r.total;
-  const tb = document.getElementById('aid-scan-table');
-  tb.innerHTML = '';
-  (r.results||[]).forEach(row => {
-    const c = CAT_COLORS[row.category]||C.dim;
-    const rdot = row.replay_ok===false ? 'var(--alert)' : 'var(--text)';
-    const tr = document.createElement('tr');
-    const preview = (row.response_preview||'').replace(/"/g,'&quot;');
-    tr.setAttribute('title', preview);
-    tr.innerHTML = '<td style="text-align:center"><span style="display:block;margin:auto;width:8px;height:8px;border-radius:50%;background:'+rdot+'"></span></td>'+
-      '<td>'+row.aid_key+'</td>'+
-      '<td style="color:'+c+';font-weight:bold">'+row.category+'</td>';
-    tb.appendChild(tr);
-  });
+  const el = id => document.getElementById(id);
+  if (el('as-violation')) el('as-violation').textContent = s.VIOLATION||0;
+  if (el('as-new')) el('as-new').textContent = s.NEW_SCREEN||0;
+  if (el('as-same')) el('as-same').textContent = s.SAME_SCREEN||0;
+  if (el('as-timeout')) el('as-timeout').textContent = s.TIMEOUT||0;
+  if (el('as-skipped')) el('as-skipped').textContent = s.SKIPPED||0;
+  const st = el('aid-scan-status');
+  if (st) st.textContent = r.progress+'/'+r.total;
+  const fill = el('aid-scan-progress-fill');
+  if (fill && r.total > 0) fill.style.width = Math.round(r.progress/r.total*100)+'%';
+  const tb = el('aid-scan-table');
+  if (tb) {
+    tb.innerHTML = '';
+    (r.results||[]).forEach(row => {
+      const c = CAT_COLORS[row.category]||C.dim;
+      const rdot = row.replay_ok===false ? 'var(--alert)' : 'var(--text)';
+      const tr = document.createElement('tr');
+      const preview = (row.response_preview||'').replace(/"/g,'&quot;');
+      tr.setAttribute('title', preview);
+      tr.innerHTML = '<td style="text-align:center"><span style="display:block;margin:auto;width:8px;height:8px;border-radius:50%;background:'+rdot+'"></span></td>'+
+        '<td>'+row.aid_key+'</td>'+
+        '<td style="color:'+c+';font-weight:bold">'+row.category+'</td>';
+      tb.appendChild(tr);
+    });
+  }
   if (!r.running) {
     if (aidScanPoller) { clearInterval(aidScanPoller); aidScanPoller = null; }
-    document.getElementById('aid-scan-btn').style.display = '';
-    document.getElementById('aid-scan-stop-btn').style.display = 'none';
+    const btn = el('aid-scan-btn');
+    const stop = el('aid-scan-stop-btn');
+    if (btn) btn.style.display = '';
+    if (stop) stop.style.display = 'none';
     const nSkipped = s.SKIPPED||0;
     const nFailed = (r.results||[]).filter(x => x.replay_ok===false && x.category!=='SKIPPED').length;
     if (nSkipped > 0) {
-      document.getElementById('aid-scan-progress').textContent = 'Interrupted — '+nSkipped+' skipped';
-      toast('Session lost — '+nSkipped+' keys skipped (double fail)', 'warn');
+      if (st) st.textContent = 'Interrupted — '+nSkipped+' skipped';
+      toast('Session lost — '+nSkipped+' keys skipped', 'warn');
     } else if (nFailed > 0) {
-      document.getElementById('aid-scan-progress').textContent = 'Done ('+r.total+' keys, '+nFailed+' recovered)';
+      if (st) st.textContent = 'Done ('+r.total+' keys, '+nFailed+' recovered)';
       toast('AID Scan complete — '+nFailed+' key(s) needed recovery', 'warn');
     } else {
-      document.getElementById('aid-scan-progress').textContent = 'Done ('+r.total+' keys)';
+      if (st) st.textContent = 'Done ('+r.total+' keys)';
       toast('AID Scan complete', 'success');
     }
   }
@@ -2561,7 +2600,7 @@ function openFuzzPopup(field) {
     <div id="fp-status" style="color:var(--dim);margin-bottom:4px"></div>
     <div class="fuzz-progress" id="fp-progress" style="display:none"><div class="fuzz-progress-fill" id="fp-progress-fill"></div></div>
     <div id="fp-results" style="max-height:400px;overflow-y:auto">
-      <table><thead><tr><th>Payload</th><th>Source</th><th>Status</th><th>Diff</th></tr></thead>
+      <table style="table-layout:fixed;width:100%"><thead><tr><th style="width:45%">Payload</th><th style="width:20%">Wordlist</th><th style="width:25%">Status</th><th style="width:10%">Diff</th></tr></thead>
       <tbody id="fp-results-table"></tbody></table>
       <div class="fuzz-summary" id="fp-summary"></div>
     </div>
@@ -2626,7 +2665,7 @@ async function fuzzPopupPoll() {
         const statusText = r.abend_code ? r.status+' ('+r.abend_code+')' : r.status;
         const recIcon = r.recovered ? ' <span title="Recovery needed" style="color:#4ec9b0">\u21bb</span>' : '';
         const src = (r.source||'').replace('.txt','');
-        tr.innerHTML = '<td>'+esc(r.payload)+'</td><td style="color:var(--dim)">'+src+'</td><td style="color:'+col+'">'+statusText+recIcon+'</td><td>'+diffHtml+'</td>';
+        tr.innerHTML = '<td title="'+esc(r.payload)+'">'+esc(r.payload)+'</td><td style="color:var(--dim)" title="'+src+'">'+src+'</td><td style="color:'+col+'">'+statusText+recIcon+'</td><td>'+diffHtml+'</td>';
         tbody.appendChild(tr);
       }
       if (sumEl) {
