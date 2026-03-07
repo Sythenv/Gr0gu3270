@@ -668,38 +668,11 @@ class Gr0gu3270:
         self.logger.debug(template.format("Color Set Address","hack_color_sa", self.hack_color_sa))
         self.logger.debug(template.format("Color High Visibility","hack_color_hv", self.hack_color_hv))
 
-    def reset_hack_variables_state(self):
-        '''
-        Resets all the variables back to False
-        '''
-        self.hack_toggled = False
-        self.hack_color_toggled =False
-        self.hack_on = False        # We in the butter zone now
-        self.hack_color_on = False
-        self.hack_prot = False      # 'Protected' Flag (Bit 6) 
-        self.hack_hf = False        # 'Non-display' Flag (Bit 4)
-        self.hack_rnr = False       # 'Numeric Only' Flag (Bit 5)
-        self.hack_ei = False        # enable intentisty
-        self.hack_sf = False        # Start Field
-        self.hack_sfe = False       # Start Field Extended
-        self.hack_mf = False        # Modified Field
-        self.hack_hv = False        # High Visibility
-        self.hack_color_sfe = False # 
-        self.hack_color_mf = False  # 
-        self.hack_color_sa = False  # 
-        self.hack_color_hv = False  # 
-
     def get_ip_port(self):
         '''
         returns a tuple of the server and port
         '''
         return (self.server_ip, self.server_port)
-    
-    def get_proxy_ip_port(self):
-        '''
-        returns a tuple of the server and port
-        '''
-        return (self.proxy_ip, self.proxy_port)
     
     def get_tls(self):
         '''
@@ -731,149 +704,9 @@ class Gr0gu3270:
         '''
         return self.inject_config_set
     
-    def get_hack_on(self):
-        '''
-        Returns if hack mode is on
-        '''
-        return self.hack_on
-    
-    def get_hack_color_on(self):
-        '''
-        Returns if hack color mode is on
-        '''
-        return self.hack_color_on
-
-    def toggle_hack(self):
-        '''Toggles the 'hack_toggled' variable'''
-        self.logger.debug("Changing hack_toggled from {} to {}".format(
-            self.hack_toggled, not self.hack_toggled))
-        self.hack_toggled = not self.hack_toggled
-        
-    def toggle_hack_color(self):
-        '''Toggles the 'hack_color_toggled' variable'''
-        self.logger.debug("Changing hack_toggled from {} to {}".format(
-            self.hack_color_toggled, not self.hack_color_toggled))
-        self.hack_color_toggled = not self.hack_color_toggled
-
-    def set_offline(self):
-        '''Sets the offline flag'''
-        self.offline = True
-    
     def is_offline(self):
         ''' Returns True if offline, False if not'''
         return self.offline
-
-    def toggle_hack_on(self):
-        '''
-        Inverts the hack_on state
-        '''
-        self.logger.debug("Changing hack_on from {} to {}".format(
-            self.hack_on, not self.hack_on))
-        self.hack_on = not self.hack_on
-
-    def toggle_hack_color_on(self):
-        '''
-        Inverts the hack_color_on state
-        '''
-        self.logger.debug("Changing hack_color_on from {} to {}".format(
-            self.hack_color_on, not self.hack_color_on))
-        self.hack_color_on = not self.hack_color_on
-
-    def toggle_hack_prot(self):
-        '''
-        Inverts the hack_prot state
-        '''
-        self.logger.debug("Changing hack_prot from {} to {}".format(
-            self.hack_prot, not self.hack_prot))
-        self.hack_prot = not self.hack_prot
-
-    def toggle_hack_hf(self):
-        '''
-        Inverts the hack_hf state
-        '''
-        self.logger.debug("Changing hack_hf from {} to {}".format(
-            self.hack_hf, not self.hack_hf))
-        self.hack_hf = not self.hack_hf
-
-    def toggle_hack_rnr(self):
-        '''
-        Inverts the hack_rnr state
-        '''
-        self.logger.debug("Changing hack_rnr from {} to {}".format(
-            self.hack_rnr, not self.hack_rnr))
-        self.hack_rnr = not self.hack_rnr
-
-    def toggle_hack_ei(self):
-        '''
-        Inverts the hack_ei state
-        '''
-        self.logger.debug("Changing hack_ei from {} to {}".format(
-            self.hack_ei, not self.hack_ei))
-        self.hack_ei = not self.hack_ei
-
-    def toggle_hack_sf(self):
-        '''
-        Inverts the hack_sf state
-        '''
-        self.logger.debug("Changing hack_sf from {} to {}".format(
-            self.hack_sf, not self.hack_sf))
-        self.hack_sf = not self.hack_sf
-
-    def toggle_hack_sfe(self):
-        '''
-        Inverts the hack_sfe state
-        '''
-        self.logger.debug("Changing from {} to {}".format(
-            self.hack_sfe, not self.hack_sfe))
-        self.hack_sfe = not self.hack_sfe
-
-    def toggle_hack_mf(self):
-        '''
-        Inverts the hack_mf state
-        '''
-        self.logger.debug("Changing hack_mf from {} to {}".format(
-            self.hack_mf, not self.hack_mf))
-        self.hack_mf = not self.hack_mf
-
-    def toggle_hack_hv(self):
-        '''
-        Inverts the hack_prot state
-        '''
-        self.logger.debug("Changing from {} to {}".format(
-            self.hack_hv, not self.hack_hv))
-        self.hack_hv = not self.hack_hv
-
-    def toggle_hack_color_sfe(self):
-        '''
-        Inverts the hack_color_sfe state
-        '''
-        self.logger.debug("Changing hack_color_sfe from {} to {}".format(
-            self.hack_color_sfe, not self.hack_color_sfe))
-        self.hack_color_sfe = not self.hack_color_sfe
-
-    def toggle_hack_color_mf(self):
-        '''
-        Inverts the hack_color_mf state
-        '''
-        self.logger.debug("Changing hack_color_mf from {} to {}".format(
-            self.hack_color_mf, not self.hack_color_mf))
-        self.hack_color_mf = not self.hack_color_mf
-
-    def toggle_hack_color_sa(self):
-        '''
-        Inverts the hack_color_sa state
-        '''
-        self.logger.debug("Changing hack_color_sa from {} to {}".format(
-            self.hack_color_sa, not self.hack_color_sa))
-        self.hack_color_sa = not self.hack_color_sa
-
-    def toggle_hack_color_hv(self):
-        '''
-        Inverts the hack_color_hv state
-        '''
-        self.logger.debug("Changing hack_color_hv from {} to {}".format(
-            self.hack_color_hv, not self.hack_color_hv))
-        self.hack_color_hv = not self.hack_color_hv
 
     def set_inject_setup_capture(self,value=1):
         '''
@@ -2527,9 +2360,6 @@ class Gr0gu3270:
         self.tend_server()
         return
     
-    def write_log(self, direction, notes, data):
-        self.write_database_log(direction, notes, data)
-
     def capture_mask(self, client_data):
 
         preamble_count = 0

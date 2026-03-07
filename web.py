@@ -1448,9 +1448,6 @@ body { font-family: 'Consolas','Monaco','Courier New',monospace; background: var
 .container { max-width: 1200px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:9998; background: repeating-linear-gradient(0deg, rgba(0,0,0,0.06) 0px, rgba(0,0,0,0.06) 1px, transparent 1px, transparent 3px); }
 
-/* Reverse video helper */
-.rv { background: var(--head); color: var(--bg); padding: 1px 8px; font-weight: bold; }
-
 /* Header */
 .header { background: var(--bg); padding: 0; display: flex; align-items: stretch; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .header-grogu { color: #00969a; font-size: 5px; line-height: 1.1; white-space: pre; padding: 2px 8px; display: flex; align-items: center; text-shadow: 0 0 6px #00969a; opacity: 0.8; border-right: 1px solid var(--border); }
