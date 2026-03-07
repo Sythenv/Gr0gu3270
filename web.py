@@ -494,6 +494,8 @@ class Gr0gu3270State:
 
         trunc_mode = data.get('trunc', 'SKIP')
         key_mode = data.get('key', 'ENTER')
+        timeout = float(data.get('timeout', 1))
+        delay = float(data.get('delay', 0.1))
 
         self.inject_running = True
         self.fuzz_progress = {'current': 0, 'total': 0, 'payload': ''}
@@ -501,12 +503,12 @@ class Gr0gu3270State:
         self.inject_status_msg = 'Fuzz starting...'
         self.inject_thread = threading.Thread(
             target=self._fuzz_worker,
-            args=(fields, full_path, trunc_mode, key_mode),
+            args=(fields, full_path, trunc_mode, key_mode, timeout, delay),
             daemon=True)
         self.inject_thread.start()
         return {'ok': True, 'message': 'Fuzz started on {} field(s).'.format(len(fields))}
 
-    def _fuzz_worker(self, fields, filepath, trunc_mode, key_mode):
+    def _fuzz_worker(self, fields, filepath, trunc_mode, key_mode, timeout=1, delay=0.1):
         try:
             with open(filepath, 'r') as f:
                 lines = [l.rstrip() for l in f if l.strip()]
@@ -555,7 +557,7 @@ class Gr0gu3270State:
                 self.fuzz_progress['payload'] = line
 
                 # Send payload and read response (I/O outside lock)
-                server_data = self.h._aid_scan_send_and_read(payload, timeout=5)
+                server_data = self.h._aid_scan_send_and_read(payload, timeout=timeout)
 
                 if server_data:
                     with self.lock:
@@ -619,7 +621,7 @@ class Gr0gu3270State:
                             self.inject_status_msg = "Lost screen — replay failed."
                             break
 
-                time.sleep(0.3)
+                time.sleep(delay)
 
         except Exception as e:
             self.inject_status_msg = "Fuzz error: {}".format(e)
@@ -640,7 +642,12 @@ class Gr0gu3270State:
         for r in results:
             s = r['status']
             summary[s] = summary.get(s, 0) + 1
-        return {'results': results, 'summary': summary}
+        return {
+            'results': results,
+            'summary': summary,
+            'running': self.inject_running,
+            'progress': getattr(self, 'fuzz_progress', {}),
+        }
 
     # ---- Macro Engine ----
 
@@ -2361,13 +2368,13 @@ async function pollFuzzStatus() {
       const pct = Math.round(s.progress.current / s.progress.total * 100);
       document.getElementById('fuzz-progress-fill').style.width = pct + '%';
     }
+    loadFuzzResults();
     if (!s.running) {
       if (fuzzPoller) { clearInterval(fuzzPoller); fuzzPoller = null; }
       document.getElementById('fuzz-start-btn').style.display = '';
       document.getElementById('fuzz-stop-btn').style.display = 'none';
       document.getElementById('fuzz-progress-bar').style.display = 'none';
       toast('Fuzz complete', 'success');
-      loadFuzzResults();
     }
   } catch(e) {}
 }
