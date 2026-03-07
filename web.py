@@ -18,10 +18,12 @@ import re
 import os
 import queue
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 
 
-class ReusableHTTPServer(HTTPServer):
+class ReusableHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
+    daemon_threads = True
 from urllib.parse import urlparse, parse_qs
 
 import libGr0gu3270
@@ -497,18 +499,29 @@ class Gr0gu3270State:
         timeout = float(data.get('timeout', 1))
         delay = float(data.get('delay', 0.1))
 
+        # Capture txn code from last client payload for simplified recovery
+        txn_code = None
+        try:
+            self.h.sql_cur.execute(
+                "SELECT RAW_DATA FROM Logs WHERE C_S='C' ORDER BY ID DESC LIMIT 1")
+            row = self.h.sql_cur.fetchone()
+            if row:
+                txn_code = self.h.detect_transaction_code(bytes(row[0]))
+        except Exception:
+            pass
+
         self.inject_running = True
         self.fuzz_progress = {'current': 0, 'total': 0, 'payload': ''}
         self.fuzz_results = []
         self.inject_status_msg = 'Fuzz starting...'
         self.inject_thread = threading.Thread(
             target=self._fuzz_worker,
-            args=(fields, full_path, trunc_mode, key_mode, timeout, delay),
+            args=(fields, full_path, trunc_mode, key_mode, timeout, delay, txn_code),
             daemon=True)
         self.inject_thread.start()
         return {'ok': True, 'message': 'Fuzz started on {} field(s).'.format(len(fields))}
 
-    def _fuzz_worker(self, fields, filepath, trunc_mode, key_mode, timeout=1, delay=0.1):
+    def _fuzz_worker(self, fields, filepath, trunc_mode, key_mode, timeout=1, delay=0.1, txn_code=None):
         try:
             with open(filepath, 'r') as f:
                 lines = [l.rstrip() for l in f if l.strip()]
@@ -526,6 +539,8 @@ class Gr0gu3270State:
                 aid_byte = self.h.AIDS[aid_name][0]
 
             sim_threshold = 0.8
+            recovery_count = 0
+            consecutive_fails = 0
 
             for idx, line in enumerate(lines):
                 if self.shutdown_flag.is_set() or not self.inject_running:
@@ -613,18 +628,38 @@ class Gr0gu3270State:
                 if ref_screen and server_data:
                     sim = self.h.screen_similarity(server_data, ref_screen)
                     if sim <= sim_threshold:
-                        # Try replay to return
-                        with self.lock:
-                            self.h.aid_scan_replay_path = replay_path
-                            last_resp = self.h.aid_scan_replay()
-                        if last_resp:
-                            sim2 = self.h.screen_similarity(last_resp, ref_screen)
-                            if sim2 <= sim_threshold:
-                                self.inject_status_msg = "Lost screen — fuzz stopped."
+                        recovered = False
+                        for attempt in range(2):
+                            time.sleep(0.3 * (attempt + 1))
+                            if txn_code:
+                                # Simple recovery: CLEAR + re-send txn code
+                                clear_p = self.h.build_clear_payload(is_tn3270e)
+                                txn_p = self.h.build_txn_payload(txn_code, is_tn3270e)
+                                self.h._aid_scan_send_and_read(clear_p, timeout=1)
+                                last_resp = self.h._aid_scan_send_and_read(txn_p, timeout=2)
+                            else:
+                                # Fallback: full replay if no txn code
+                                with self.lock:
+                                    self.h.aid_scan_replay_path = replay_path
+                                    last_resp = self.h.aid_scan_replay()
+                            if last_resp:
+                                sim2 = self.h.screen_similarity(last_resp, ref_screen)
+                                if sim2 > sim_threshold:
+                                    recovered = True
+                                    recovery_count += 1
+                                    try:
+                                        self.h.client.send(last_resp)
+                                        self.h.client.flush()
+                                    except Exception:
+                                        pass
+                                    break
+                        if not recovered:
+                            consecutive_fails += 1
+                            if consecutive_fails >= 3:
+                                self.inject_status_msg = "Lost screen — {} consecutive recovery failures.".format(consecutive_fails)
                                 break
                         else:
-                            self.inject_status_msg = "Lost screen — replay failed."
-                            break
+                            consecutive_fails = 0
 
                 time.sleep(delay)
 
@@ -633,8 +668,10 @@ class Gr0gu3270State:
         finally:
             self.inject_running = False
             if 'Lost screen' not in self.inject_status_msg and 'error' not in self.inject_status_msg.lower():
-                self.inject_status_msg = "Fuzz complete ({} payloads).".format(
-                    self.fuzz_progress['current'])
+                msg = "Fuzz complete ({} payloads).".format(self.fuzz_progress['current'])
+                if recovery_count > 0:
+                    msg += " {} recovery(s).".format(recovery_count)
+                self.inject_status_msg = msg
 
     def fuzz_stop(self):
         self.inject_running = False

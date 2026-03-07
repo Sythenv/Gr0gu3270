@@ -532,26 +532,28 @@ def test_fuzz_worker_multi_field(state, tmp_path):
         del state.h._aid_scan_send_and_read
 
 def test_fuzz_worker_replay_fallback(state, tmp_path):
-    """When screen similarity drops, replay is triggered."""
+    """When screen similarity drops, txn_code recovery (CLEAR+txn) is used."""
     from tests.test_core import ascii_to_ebcdic
     inject_file = tmp_path / "fuzz_replay.txt"
-    inject_file.write_text("TEST\n")
+    inject_file.write_text("BAD\nGOOD\n")
     fields = [{'row': 1, 'col': 10, 'length': 10}]
 
-    # Set up a reference screen in DB
     ref_data = ascii_to_ebcdic("CICS MENU SELECT OPTION 1-9 PF KEYS AVAILABLE")
-    state.h.write_database_log('C', 'clear', b'\x6d\xff\xef')
+    # Seed a client payload with txn code "MCOR" so fuzz_go() extracts it
+    txn_payload = b'\x7d\x5b\x60\xD4\xC3\xD6\xD9\xff\xef'  # ENTER + cursor + MCOR
+    state.h.write_database_log('C', 'txn', txn_payload)
     state.h.write_database_log('S', 'ref', ref_data)
 
-    # Return different screen so similarity < 0.8
     diff_screen = ascii_to_ebcdic("COMPLETELY DIFFERENT SCREEN CONTENT HERE NOW")
     call_count = [0]
     def mock_send(payload, timeout=2):
         call_count[0] += 1
+        # Calls: 1=fuzz payload→wrong, 2=CLEAR(recovery), 3=txn(recovery)→ref
+        if call_count[0] >= 3:
+            return ref_data
         return diff_screen
     state.h._aid_scan_send_and_read = mock_send
 
-    # Mock client.send to avoid errors
     class FakeClient:
         def send(self, data): pass
         def flush(self): pass
@@ -560,16 +562,16 @@ def test_fuzz_worker_replay_fallback(state, tmp_path):
     state.fuzz_results = []
 
     try:
-        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER')
-        # Should have stopped due to lost screen
-        assert 'Lost screen' in state.inject_status_msg
+        # Pass txn_code directly (fuzz_go() would extract it from DB)
+        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER', txn_code='MCOR')
+        assert 'recovery' in state.inject_status_msg.lower() or 'complete' in state.inject_status_msg.lower()
     finally:
         del state.h._aid_scan_send_and_read
 
 def test_fuzz_worker_lost_screen_stops(state, tmp_path):
-    """When replay also fails, fuzz stops."""
+    """When recovery always fails, fuzz stops after 3 consecutive failures."""
     inject_file = tmp_path / "fuzz_lost.txt"
-    inject_file.write_text("A\nB\nC\n")
+    inject_file.write_text("A\nB\nC\nD\nE\n")
     fields = [{'row': 0, 'col': 0, 'length': 5}]
 
     from tests.test_core import ascii_to_ebcdic
@@ -589,11 +591,12 @@ def test_fuzz_worker_lost_screen_stops(state, tmp_path):
     state.inject_running = True
 
     try:
-        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER')
+        # With txn_code, recovery uses CLEAR+txn but still fails (diff screen)
+        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER', txn_code='MCOR')
         assert state.inject_running is False
         assert 'Lost screen' in state.inject_status_msg
-        # Should have stopped after first payload, not processed all 3
-        assert state.fuzz_progress['current'] <= 1
+        # Should stop after 3 consecutive recovery failures, not all 5
+        assert state.fuzz_progress['current'] <= 3
     finally:
         del state.h._aid_scan_send_and_read
 
