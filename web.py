@@ -369,23 +369,43 @@ class Gr0gu3270State:
                 self.h.set_hack_color_on(int(data['on']))
                 self.h.set_hack_color_toggled()
 
+    def _select_wordlists(self, field):
+        """Auto-select wordlists based on field attributes."""
+        inj_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'injections')
+        is_hidden = field.get('hidden', False)
+        is_numeric = field.get('numeric', False)
+
+        if is_hidden:
+            order = ['hidden-tampering.txt', 'boundary-values.txt', 'cobol-overflow.txt']
+        elif is_numeric:
+            order = ['boundary-values.txt', 'cobol-overflow.txt']
+        else:
+            order = ['boundary-values.txt', 'cobol-overflow.txt', 'db2-injections.txt']
+
+        lines = []
+        sources = []
+        for fname in order:
+            fpath = os.path.join(inj_dir, fname)
+            if os.path.isfile(fpath):
+                with open(fpath, 'r') as f:
+                    file_lines = [l.rstrip() for l in f if l.strip() and not l.startswith('#')]
+                for l in file_lines:
+                    lines.append((l, fname))
+                sources.append(fname)
+        return lines, sources
+
     def fuzz_go(self, data):
         if self.inject_running:
             return {'ok': False, 'message': 'Injection already running.'}
 
-        fields = data.get('fields', [])
-        if not fields:
-            return {'ok': False, 'message': 'No fields selected.'}
+        field = data.get('field')
+        if not field:
+            return {'ok': False, 'message': 'No field specified.'}
 
-        filename = data.get('filename', '')
-        if not filename:
-            return {'ok': False, 'message': 'No wordlist file specified.'}
+        lines, sources = self._select_wordlists(field)
+        if not lines:
+            return {'ok': False, 'message': 'No wordlist files found.'}
 
-        full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'injections', filename)
-        if not os.path.isfile(full_path):
-            return {'ok': False, 'message': 'File not found: ' + filename}
-
-        trunc_mode = data.get('trunc', 'SKIP')
         key_mode = data.get('key', 'ENTER')
         timeout = float(data.get('timeout', 1))
         delay = float(data.get('delay', 0.1))
@@ -402,22 +422,21 @@ class Gr0gu3270State:
             pass
 
         self.inject_running = True
-        self.fuzz_progress = {'current': 0, 'total': 0, 'payload': ''}
+        self.fuzz_progress = {'current': 0, 'total': len(lines), 'payload': '', 'source': ''}
         self.fuzz_results = []
-        self.inject_status_msg = 'Fuzz starting...'
+        self.inject_status_msg = 'Fuzz starting ({} payloads from {})...'.format(
+            len(lines), ', '.join(sources))
         self.inject_thread = threading.Thread(
             target=self._fuzz_worker,
-            args=(fields, full_path, trunc_mode, key_mode, timeout, delay, txn_code),
+            args=([field], lines, key_mode, timeout, delay, txn_code),
             daemon=True)
         self.inject_thread.start()
-        return {'ok': True, 'message': 'Fuzz started on {} field(s).'.format(len(fields))}
+        return {'ok': True, 'message': 'Fuzz started: {} payloads from {}'.format(
+            len(lines), ', '.join(sources))}
 
-    def _fuzz_worker(self, fields, filepath, trunc_mode, key_mode, timeout=1, delay=0.1, txn_code=None):
+    def _fuzz_worker(self, fields, lines_with_source, key_mode, timeout=1, delay=0.1, txn_code=None):
         try:
-            with open(filepath, 'r') as f:
-                lines = [l.rstrip() for l in f if l.strip()]
-
-            self.fuzz_progress['total'] = len(lines)
+            self.fuzz_progress['total'] = len(lines_with_source)
 
             with self.lock:
                 ref_screen = self.h.extract_ref_screen()
@@ -433,36 +452,29 @@ class Gr0gu3270State:
             recovery_count = 0
             consecutive_fails = 0
 
-            for idx, line in enumerate(lines):
+            for idx, (line, source_file) in enumerate(lines_with_source):
                 if self.shutdown_flag.is_set() or not self.inject_running:
                     break
 
-                # Build field payloads — truncate or skip per field length
+                # Build field payloads — truncate per field length
                 fields_with_text = []
-                skip = False
                 for field in fields:
                     flen = field.get('length', 0)
                     text = line
                     if flen > 0 and len(text) > flen:
-                        if trunc_mode == 'TRUNC':
-                            text = text[:flen]
-                        else:
-                            skip = True
-                            break
+                        text = text[:flen]
                     fields_with_text.append((text, field['row'], field['col']))
-
-                if skip:
-                    self.fuzz_progress['current'] = idx + 1
-                    continue
 
                 with self.lock:
                     payload = self.h.build_multi_field_payload(
                         fields_with_text, is_tn3270e, aid=aid_byte)
                     self.h.write_database_log('C', 'Fuzz: ' + line, payload)
 
-                self.inject_status_msg = "Sending {}/{}: {}".format(idx + 1, len(lines), line)
+                self.inject_status_msg = "Sending {}/{}: {} [{}]".format(
+                    idx + 1, len(lines_with_source), line, source_file)
                 self.fuzz_progress['current'] = idx + 1
                 self.fuzz_progress['payload'] = line
+                self.fuzz_progress['source'] = source_file
 
                 # Send payload and read response (I/O outside lock)
                 server_data = self.h._aid_scan_send_and_read(payload, timeout=timeout)
@@ -490,6 +502,7 @@ class Gr0gu3270State:
                         pass
                     self.fuzz_results.append({
                         'payload': line,
+                        'source': source_file,
                         'status': classification,
                         'abend_code': abend_code,
                         'size': len(server_data),
@@ -498,21 +511,32 @@ class Gr0gu3270State:
                         'recovered': False,
                     })
                     # Emit finding for interesting fuzz results
+                    field_loc = 'R{},C{}'.format(fields[0]['row'], fields[0]['col'])
                     if classification == 'ABEND':
                         with self.lock:
                             self.h.emit_finding('HIGH', 'FUZZER',
-                                                'Payload "{}" caused ABEND {}'.format(line[:60], abend_code or '?'),
+                                                'Payload "{}" ({}) caused ABEND {} on field {}'.format(
+                                                    line[:60], source_file, abend_code or '?', field_loc),
                                                 txn_code=txn_code,
                                                 dedup_key='FUZZER:ABEND:{}:{}'.format(abend_code or '?', line[:60]))
                     elif classification == 'DENIED':
                         with self.lock:
                             self.h.emit_finding('MEDIUM', 'FUZZER',
-                                                'Payload "{}" denied by ESM'.format(line[:60]),
+                                                'Payload "{}" ({}) denied by ESM on field {}'.format(
+                                                    line[:60], source_file, field_loc),
                                                 txn_code=txn_code,
                                                 dedup_key='FUZZER:DENIED:{}'.format(line[:60]))
+                    elif classification == 'NAVIGATED':
+                        with self.lock:
+                            self.h.emit_finding('MEDIUM', 'FUZZER',
+                                                'Payload "{}" ({}) changed screen on field {}'.format(
+                                                    line[:60], source_file, field_loc),
+                                                txn_code=txn_code,
+                                                dedup_key='FUZZER:NAVIGATED:{}'.format(line[:60]))
                 else:
                     self.fuzz_results.append({
                         'payload': line,
+                        'source': source_file,
                         'status': 'NO_RESPONSE',
                         'abend_code': None,
                         'size': 0,
@@ -1443,9 +1467,16 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 .controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; padding: 6px 8px; background: #050a05; border: 1px solid var(--border); }
 .controls label { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 17px; color: var(--text); }
 .controls input[type="checkbox"] { accent-color: var(--head); }
-.fuzz-selected { background: var(--head) !important; color: var(--bg) !important; }
-.fuzz-selected td { color: var(--bg) !important; font-weight: bold; }
 .fuzz-diff { cursor: help; color: #f90; font-weight: bold; }
+.fuzz-overlay { position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center; }
+.fuzz-popup { background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:16px;width:min(700px,90vw);max-height:80vh;overflow-y:auto;font-size:15px; }
+.fuzz-popup h3 { margin:0 0 8px 0;font-size:17px;color:var(--head); }
+.fuzz-popup .fuzz-field-info { color:var(--dim);margin-bottom:8px; }
+.fuzz-popup .fuzz-controls { display:flex;gap:8px;align-items:center;margin-bottom:8px; }
+.fuzz-popup .fuzz-progress { height:4px;background:var(--border);border-radius:2px;margin-bottom:8px; }
+.fuzz-popup .fuzz-progress-fill { height:100%;background:var(--head);border-radius:2px;width:0%;transition:width 0.3s; }
+.fuzz-popup table { width:100%; }
+.fuzz-popup .fuzz-summary { margin-top:4px;color:var(--dim);font-size:12px; }
 .field-input:hover { background: rgba(0,150,154,0.2); }
 .btn { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 17px; transition: all 0.15s; }
 .btn:hover { border-color: var(--head); color: var(--head); }
@@ -1604,34 +1635,8 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
     <div class="panel-header" onclick="togglePanel('panel-screen')">
       <span class="panel-title">Screen Map</span>
       <button class="btn" id="smap-filter-btn" onclick="event.stopPropagation();toggleSmapFilter()" style="margin-left:auto;font-size:15px;padding:2px 8px">SHOW ALL</button>
-      <button class="btn" id="fuzz-btn" onclick="event.stopPropagation();openFuzzConfig()" style="display:none;font-size:15px;padding:2px 8px;margin-left:6px">FUZZ (0)</button>
     </div>
     <div class="panel-body">
-      <div id="fuzz-config" style="display:none;background:var(--input-bg);border:1px solid var(--border);padding:8px;margin-bottom:6px;font-size:15px">
-        <div class="controls" style="gap:8px;flex-wrap:wrap">
-          <span>File:</span>
-          <select id="fuzz-file-select" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit"><option value="">-- Wordlist --</option></select>
-          <span>Mode:</span>
-          <select id="fuzz-trunc" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit"><option value="SKIP">SKIP</option><option value="TRUNC">TRUNC</option></select>
-          <span>Keys:</span>
-          <select id="fuzz-key" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit">
-            <option value="ENTER">ENTER</option><option value="ENTER+CLEAR">ENTER+CLEAR</option>
-            <option value="ENTER+PF3">ENTER+PF3</option><option value="ENTER+PF3+CLEAR">ENTER+PF3+CLEAR</option>
-          </select>
-          <button class="btn" id="fuzz-start-btn" onclick="startFuzz()">START</button>
-          <button class="btn danger" id="fuzz-stop-btn" onclick="stopFuzz()" style="display:none">STOP</button>
-          <span id="fuzz-status" style="color:var(--dim)"></span>
-        </div>
-        <div id="fuzz-progress-bar" style="display:none;margin-top:6px;height:4px;background:var(--border);border-radius:2px">
-          <div id="fuzz-progress-fill" style="height:100%;background:var(--head);border-radius:2px;width:0%;transition:width 0.3s"></div>
-        </div>
-        <div id="fuzz-results-wrap" style="display:none;margin-top:8px;max-height:200px;overflow-y:auto">
-          <table style="width:100%"><thead><tr>
-            <th>Payload</th><th>Status</th><th>Diff</th>
-          </tr></thead><tbody id="fuzz-results-table"></tbody></table>
-          <div id="fuzz-summary" style="margin-top:4px;color:var(--dim);font-size:12px"></div>
-        </div>
-      </div>
       <table><thead><tr id="smap-thead">
         <th style="text-align:center">H</th><th style="text-align:center">N</th><th>Len</th><th>Content</th>
       </tr></thead><tbody id="smap-table"></tbody></table>
@@ -2211,8 +2216,6 @@ async function loadAbends() {
   } catch(e) {}
 }
 
-let selectedFuzzFields = [];
-let fuzzPoller = null;
 let smapShowAll = false;
 let smapData = [];
 
@@ -2230,7 +2233,6 @@ function renderScreenMap() {
     ? '<th>Pos</th><th style="text-align:center">H</th><th style="text-align:center">N</th><th>Len</th><th>Content</th>'
     : '<th style="text-align:center">H</th><th style="text-align:center">N</th><th>Len</th><th>Content</th>';
   tbody.innerHTML = '';
-  selectedFuzzFields = [];
   const dot = '<span style="display:block;margin:auto;width:8px;height:8px;border-radius:50%;background:var(--text)"></span>';
   smapData.forEach((f, i) => {
     const isInput = !f.protected;
@@ -2242,13 +2244,12 @@ function renderScreenMap() {
     else tr.className = 'field-label';
     if (isInput || isHidden) {
       tr.style.cursor = 'pointer';
-      tr.onclick = () => toggleFuzzField(tr, f);
+      tr.ondblclick = () => openFuzzPopup(f);
     }
     const pos = smapShowAll ? '<td>'+f.row+','+f.col+'</td>' : '';
     tr.innerHTML = pos+'<td>'+(f.hidden?dot:'')+'</td><td>'+(f.numeric?dot:'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
     tbody.appendChild(tr);
   });
-  updateFuzzButton();
 }
 
 function toggleSmapFilter() {
@@ -2257,114 +2258,10 @@ function toggleSmapFilter() {
   renderScreenMap();
 }
 
-function toggleFuzzField(tr, field) {
-  const key = field.row + ',' + field.col;
-  const idx = selectedFuzzFields.findIndex(f => f.row === field.row && f.col === field.col);
-  if (idx >= 0) {
-    selectedFuzzFields.splice(idx, 1);
-    tr.classList.remove('fuzz-selected');
-  } else {
-    selectedFuzzFields.push({row: field.row, col: field.col, length: field.length});
-    tr.classList.add('fuzz-selected');
-  }
-  updateFuzzButton();
-}
-
-function updateFuzzButton() {
-  const btn = document.getElementById('fuzz-btn');
-  const n = selectedFuzzFields.length;
-  btn.textContent = 'FUZZ (' + n + ')';
-  btn.style.display = n > 0 ? '' : 'none';
-}
-
-function openFuzzConfig() {
-  const cfg = document.getElementById('fuzz-config');
-  cfg.style.display = cfg.style.display === 'none' ? 'block' : 'none';
-  // Populate wordlist dropdown if empty
-  const sel = document.getElementById('fuzz-file-select');
-  if (sel.options.length <= 1) {
-    api('/api/injection_files').then(files => {
-      files.forEach(f => {
-        const opt = document.createElement('option');
-        opt.value = f; opt.textContent = f;
-        sel.appendChild(opt);
-      });
-    }).catch(() => {});
-  }
-}
-
-async function startFuzz() {
-  const filename = document.getElementById('fuzz-file-select').value;
-  if (!filename) { toast('Select a wordlist first', 'error'); return; }
-  if (selectedFuzzFields.length === 0) { toast('Select fields to fuzz', 'error'); return; }
-  const trunc = document.getElementById('fuzz-trunc').value;
-  const key = document.getElementById('fuzz-key').value;
-  const r = await post('/api/inject/fuzz', {
-    fields: selectedFuzzFields, filename: filename, trunc: trunc, key: key
-  });
-  if (!r.ok) { toast(r.message, 'error'); return; }
-  toast(r.message, 'success');
-  document.getElementById('fuzz-start-btn').style.display = 'none';
-  document.getElementById('fuzz-stop-btn').style.display = '';
-  document.getElementById('fuzz-progress-bar').style.display = 'block';
-  fuzzPoller = setInterval(pollFuzzStatus, 800);
-}
-
-async function stopFuzz() {
-  await post('/api/inject/fuzz/stop');
-  if (fuzzPoller) { clearInterval(fuzzPoller); fuzzPoller = null; }
-  document.getElementById('fuzz-start-btn').style.display = '';
-  document.getElementById('fuzz-stop-btn').style.display = 'none';
-  document.getElementById('fuzz-status').textContent = 'Stopped';
-}
-
-async function pollFuzzStatus() {
-  try {
-    const s = await api('/api/inject_status');
-    document.getElementById('fuzz-status').textContent = s.message;
-    if (s.progress && s.progress.total > 0) {
-      const pct = Math.round(s.progress.current / s.progress.total * 100);
-      document.getElementById('fuzz-progress-fill').style.width = pct + '%';
-    }
-    loadFuzzResults();
-    if (!s.running) {
-      if (fuzzPoller) { clearInterval(fuzzPoller); fuzzPoller = null; }
-      document.getElementById('fuzz-start-btn').style.display = '';
-      document.getElementById('fuzz-stop-btn').style.display = 'none';
-      document.getElementById('fuzz-progress-bar').style.display = 'none';
-      toast('Fuzz complete', 'success');
-    }
-  } catch(e) {}
-}
-
 const FUZZ_STATUS_COLORS = {
   ACCESSIBLE:'#4ec9b0',NEW_SCREEN:'#4ec9b0',NAVIGATED:'#569cd6',ABEND:'#f44',DENIED:'#f90',
   NOT_FOUND:'var(--dim)',ERROR:'#f90',SAME_SCREEN:'var(--dim)',NO_RESPONSE:'#f44',UNKNOWN:'var(--dim)'
 };
-async function loadFuzzResults() {
-  try {
-    const d = await api('/api/inject/fuzz/results');
-    const wrap = document.getElementById('fuzz-results-wrap');
-    const tbody = document.getElementById('fuzz-results-table');
-    const sumEl = document.getElementById('fuzz-summary');
-    if (!d.results || d.results.length === 0) { wrap.style.display='none'; return; }
-    wrap.style.display = 'block';
-    tbody.innerHTML = '';
-    for (const r of d.results) {
-      const tr = document.createElement('tr');
-      const col = FUZZ_STATUS_COLORS[r.status] || 'var(--fg)';
-      const diffHtml = r.diff && r.diff.length > 0
-        ? '<span class="fuzz-diff" title="'+r.diff.map(d=>'R'+d.row+': '+esc(d.got)).join('&#10;')+'">\u0394'+r.diff.length+'</span>'
-        : '';
-      const statusText = r.abend_code ? r.status+' ('+r.abend_code+')' : r.status;
-      const recIcon = r.recovered ? ' <span title="Recovery needed" style="color:#4ec9b0">\u21bb</span>' : '';
-      tr.innerHTML = '<td>'+esc(r.payload)+'</td><td style="color:'+col+'">'+statusText+recIcon+'</td><td>'+diffHtml+'</td>';
-      tbody.appendChild(tr);
-    }
-    const parts = Object.entries(d.summary).map(([k,v]) => k+':'+v);
-    sumEl.textContent = d.results.length + ' payloads — ' + parts.join(', ');
-  } catch(e) {}
-}
 
 async function loadTransactions() {
   try {
@@ -2954,6 +2851,120 @@ loadMacroList();
 buildActionBar();
 toggleGroup('grp-info');
 startDashboardPollers();
+// ---- Fuzz popup (double-click on field) ----
+let fuzzPoller = null;
+let fuzzField = null;
+
+function openFuzzPopup(field) {
+  if (document.getElementById('fuzz-overlay')) return; // already open
+  fuzzField = field;
+  const type = field.hidden ? 'Hidden' : field.numeric ? 'Numeric' : 'Input';
+  const overlay = document.createElement('div');
+  overlay.id = 'fuzz-overlay';
+  overlay.className = 'fuzz-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) closeFuzzPopup(); };
+  overlay.innerHTML = `<div class="fuzz-popup">
+    <h3>Fuzz Field</h3>
+    <div class="fuzz-field-info">R${field.row},C${field.col} | ${type} | Len ${field.length} | "${esc(field.content || '')}"</div>
+    <div class="fuzz-controls">
+      <span>Keys:</span>
+      <select id="fp-key" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit">
+        <option value="ENTER">ENTER</option><option value="ENTER+CLEAR">ENTER+CLEAR</option>
+        <option value="ENTER+PF3">ENTER+PF3</option><option value="ENTER+PF3+CLEAR">ENTER+PF3+CLEAR</option>
+      </select>
+      <button class="btn" id="fp-start" onclick="fuzzPopupStart()">START</button>
+      <button class="btn danger" id="fp-stop" onclick="fuzzPopupStop()" style="display:none">STOP</button>
+      <button class="btn" onclick="closeFuzzPopup()" style="margin-left:auto">\u2715</button>
+    </div>
+    <div id="fp-status" style="color:var(--dim);margin-bottom:4px"></div>
+    <div class="fuzz-progress" id="fp-progress" style="display:none"><div class="fuzz-progress-fill" id="fp-progress-fill"></div></div>
+    <div id="fp-results" style="max-height:400px;overflow-y:auto">
+      <table><thead><tr><th>Payload</th><th>Source</th><th>Status</th><th>Diff</th></tr></thead>
+      <tbody id="fp-results-table"></tbody></table>
+      <div class="fuzz-summary" id="fp-summary"></div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function closeFuzzPopup() {
+  fuzzPopupStop();
+  const el = document.getElementById('fuzz-overlay');
+  if (el) el.remove();
+  fuzzField = null;
+}
+
+async function fuzzPopupStart() {
+  if (!fuzzField) return;
+  const key = document.getElementById('fp-key').value;
+  const r = await post('/api/inject/fuzz', {
+    field: {row: fuzzField.row, col: fuzzField.col, length: fuzzField.length,
+            hidden: !!fuzzField.hidden, numeric: !!fuzzField.numeric},
+    key: key
+  });
+  if (!r.ok) { toast(r.message, 'error'); return; }
+  document.getElementById('fp-status').textContent = r.message;
+  document.getElementById('fp-start').style.display = 'none';
+  document.getElementById('fp-stop').style.display = '';
+  document.getElementById('fp-progress').style.display = 'block';
+  fuzzPoller = setInterval(fuzzPopupPoll, 800);
+}
+
+async function fuzzPopupStop() {
+  if (fuzzPoller) { clearInterval(fuzzPoller); fuzzPoller = null; }
+  await post('/api/inject/fuzz/stop').catch(()=>{});
+  const startBtn = document.getElementById('fp-start');
+  const stopBtn = document.getElementById('fp-stop');
+  if (startBtn) startBtn.style.display = '';
+  if (stopBtn) stopBtn.style.display = 'none';
+}
+
+async function fuzzPopupPoll() {
+  try {
+    const s = await api('/api/inject_status');
+    const statusEl = document.getElementById('fp-status');
+    if (statusEl) statusEl.textContent = s.message;
+    if (s.progress && s.progress.total > 0) {
+      const pct = Math.round(s.progress.current / s.progress.total * 100);
+      const fill = document.getElementById('fp-progress-fill');
+      if (fill) fill.style.width = pct + '%';
+    }
+    // Load results
+    const d = await api('/api/inject/fuzz/results');
+    const tbody = document.getElementById('fp-results-table');
+    const sumEl = document.getElementById('fp-summary');
+    if (tbody && d.results) {
+      tbody.innerHTML = '';
+      for (const r of d.results) {
+        const tr = document.createElement('tr');
+        const col = FUZZ_STATUS_COLORS[r.status] || 'var(--fg)';
+        const diffHtml = r.diff && r.diff.length > 0
+          ? '<span class="fuzz-diff" title="'+r.diff.map(d=>'R'+d.row+': '+esc(d.got)).join('&#10;')+'">\u0394'+r.diff.length+'</span>'
+          : '';
+        const statusText = r.abend_code ? r.status+' ('+r.abend_code+')' : r.status;
+        const recIcon = r.recovered ? ' <span title="Recovery needed" style="color:#4ec9b0">\u21bb</span>' : '';
+        const src = (r.source||'').replace('.txt','');
+        tr.innerHTML = '<td>'+esc(r.payload)+'</td><td style="color:var(--dim)">'+src+'</td><td style="color:'+col+'">'+statusText+recIcon+'</td><td>'+diffHtml+'</td>';
+        tbody.appendChild(tr);
+      }
+      if (sumEl) {
+        const parts = Object.entries(d.summary).map(([k,v]) => k+':'+v);
+        sumEl.textContent = d.results.length + ' payloads — ' + parts.join(', ');
+      }
+    }
+    if (!s.running) {
+      if (fuzzPoller) { clearInterval(fuzzPoller); fuzzPoller = null; }
+      const startBtn = document.getElementById('fp-start');
+      const stopBtn = document.getElementById('fp-stop');
+      const progEl = document.getElementById('fp-progress');
+      if (startBtn) startBtn.style.display = '';
+      if (stopBtn) stopBtn.style.display = 'none';
+      if (progEl) progEl.style.display = 'none';
+      toast('Fuzz complete', 'success');
+    }
+  } catch(e) {}
+}
+
 </script>
 </body>
 </html>

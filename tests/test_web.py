@@ -417,27 +417,27 @@ def test_run_daemon_drains_queue(state):
 # ---- PR6: Field Fuzzing ----
 
 def test_fuzz_go_no_fields(state):
-    """fuzz_go rejects empty fields list."""
-    r = state.fuzz_go({'fields': [], 'filename': 'alpha.txt'})
+    """fuzz_go rejects missing field."""
+    r = state.fuzz_go({})
     assert r['ok'] is False
-    assert 'No fields' in r['message']
+    assert 'No field' in r['message']
 
-def test_fuzz_go_no_file(state):
-    """fuzz_go rejects missing filename."""
-    r = state.fuzz_go({'fields': [{'row': 1, 'col': 10, 'length': 5}], 'filename': ''})
-    assert r['ok'] is False
-    assert 'No wordlist' in r['message']
+def test_fuzz_go_auto_select_alpha(state):
+    """_select_wordlists returns correct files for alpha fields."""
+    lines, sources = state._select_wordlists({'numeric': False, 'hidden': False})
+    assert 'boundary-values.txt' in sources
+    assert 'db2-injections.txt' in sources
+    assert len(lines) > 0
 
-def test_fuzz_go_file_not_found(state):
-    """fuzz_go rejects nonexistent file."""
-    r = state.fuzz_go({'fields': [{'row': 1, 'col': 10, 'length': 5}], 'filename': 'nonexistent_xyz.txt'})
-    assert r['ok'] is False
-    assert 'not found' in r['message'].lower()
+def test_fuzz_go_auto_select_numeric(state):
+    """_select_wordlists returns correct files for numeric fields."""
+    lines, sources = state._select_wordlists({'numeric': True, 'hidden': False})
+    assert 'boundary-values.txt' in sources
+    assert 'db2-injections.txt' not in sources
 
 def test_fuzz_worker_sends_payloads(state, tmp_path):
     """_fuzz_worker sends payloads via _aid_scan_send_and_read."""
-    inject_file = tmp_path / "fuzz_test.txt"
-    inject_file.write_text("AAA\nBBB\n")
+    lines = [('AAA', 'test.txt'), ('BBB', 'test.txt')]
     fields = [{'row': 1, 'col': 10, 'length': 5}]
 
     # Mock _aid_scan_send_and_read to capture calls
@@ -449,9 +449,10 @@ def test_fuzz_worker_sends_payloads(state, tmp_path):
     state.h._aid_scan_send_and_read = mock_send
     state.inject_running = True
     state.fuzz_results = []
+    state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
 
     try:
-        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER')
+        state._fuzz_worker(fields, lines, 'ENTER')
         # Should have sent 2 payloads (AAA, BBB)
         assert len(sent) == 2
         # Each payload should contain IAC EOR
@@ -462,11 +463,10 @@ def test_fuzz_worker_sends_payloads(state, tmp_path):
     finally:
         state.h._aid_scan_send_and_read = original
 
-def test_fuzz_worker_multi_field(state, tmp_path):
-    """Fuzz with 2 fields produces payload with 2 SBA orders."""
-    inject_file = tmp_path / "fuzz_multi.txt"
-    inject_file.write_text("X\n")
-    fields = [{'row': 1, 'col': 10, 'length': 5}, {'row': 3, 'col': 20, 'length': 8}]
+def test_fuzz_worker_single_field(state, tmp_path):
+    """Fuzz with 1 field produces payload with 1 SBA order."""
+    lines = [('X', 'test.txt')]
+    fields = [{'row': 1, 'col': 10, 'length': 5}]
 
     sent = []
     def mock_send(payload, timeout=2):
@@ -475,21 +475,21 @@ def test_fuzz_worker_multi_field(state, tmp_path):
     state.h._aid_scan_send_and_read = mock_send
     state.inject_running = True
     state.fuzz_results = []
+    state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
 
     try:
-        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER')
+        state._fuzz_worker(fields, lines, 'ENTER')
         assert len(sent) == 1
-        # Payload should contain 2 SBA orders (0x11)
+        # Payload should contain 1 SBA order (0x11)
         sba_count = sent[0].count(b'\x11')
-        assert sba_count == 2
+        assert sba_count == 1
     finally:
         del state.h._aid_scan_send_and_read
 
 def test_fuzz_worker_replay_fallback(state, tmp_path):
     """When screen similarity drops, txn_code recovery (CLEAR+txn) is used."""
     from tests.test_core import ascii_to_ebcdic
-    inject_file = tmp_path / "fuzz_replay.txt"
-    inject_file.write_text("BAD\nGOOD\n")
+    lines = [('BAD', 'test.txt'), ('GOOD', 'test.txt')]
     fields = [{'row': 1, 'col': 10, 'length': 10}]
 
     ref_data = ascii_to_ebcdic("CICS MENU SELECT OPTION 1-9 PF KEYS AVAILABLE")
@@ -517,15 +517,15 @@ def test_fuzz_worker_replay_fallback(state, tmp_path):
 
     try:
         # Pass txn_code directly (fuzz_go() would extract it from DB)
-        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER', txn_code='MCOR')
+        state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
+        state._fuzz_worker(fields, lines, 'ENTER', txn_code='MCOR')
         assert 'recovery' in state.inject_status_msg.lower() or 'complete' in state.inject_status_msg.lower()
     finally:
         del state.h._aid_scan_send_and_read
 
 def test_fuzz_worker_lost_screen_stops(state, tmp_path):
     """When recovery always fails, fuzz stops after 3 consecutive failures."""
-    inject_file = tmp_path / "fuzz_lost.txt"
-    inject_file.write_text("A\nB\nC\nD\nE\n")
+    lines = [('A', 't.txt'), ('B', 't.txt'), ('C', 't.txt'), ('D', 't.txt'), ('E', 't.txt')]
     fields = [{'row': 0, 'col': 0, 'length': 5}]
 
     from tests.test_core import ascii_to_ebcdic
@@ -546,7 +546,8 @@ def test_fuzz_worker_lost_screen_stops(state, tmp_path):
 
     try:
         # With txn_code, recovery uses CLEAR+txn but still fails (diff screen)
-        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER', txn_code='MCOR')
+        state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
+        state._fuzz_worker(fields, lines, 'ENTER', txn_code='MCOR')
         assert state.inject_running is False
         assert 'Lost screen' in state.inject_status_msg
         # Should stop after 3 consecutive recovery failures, not all 5
@@ -557,8 +558,7 @@ def test_fuzz_worker_lost_screen_stops(state, tmp_path):
 def test_fuzz_navigated_status(state, tmp_path):
     """When classification=ACCESSIBLE and similarity < threshold, status is NAVIGATED."""
     from tests.test_core import ascii_to_ebcdic
-    inject_file = tmp_path / "fuzz_nav.txt"
-    inject_file.write_text("NAV\n")
+    lines = [('NAV', 'test.txt')]
     fields = [{'row': 1, 'col': 10, 'length': 5}]
 
     ref_data = ascii_to_ebcdic("ORIGINAL MENU SCREEN WITH OPTIONS 1 THROUGH 9 LIST")
@@ -582,7 +582,8 @@ def test_fuzz_navigated_status(state, tmp_path):
     state.fuzz_results = []
 
     try:
-        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER', txn_code='MCOR')
+        state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
+        state._fuzz_worker(fields, lines, 'ENTER', txn_code='MCOR')
         assert len(state.fuzz_results) == 1
         assert state.fuzz_results[0]['status'] == 'NAVIGATED'
         assert state.fuzz_results[0]['recovered'] is True
@@ -593,8 +594,7 @@ def test_fuzz_navigated_status(state, tmp_path):
 def test_fuzz_abend_code_in_results(state, tmp_path):
     """When classification=ABEND, the abend_code field contains the code."""
     from tests.test_core import ascii_to_ebcdic
-    inject_file = tmp_path / "fuzz_abend.txt"
-    inject_file.write_text("CRASH\n")
+    lines = [('CRASH', 'test.txt')]
     fields = [{'row': 1, 'col': 10, 'length': 5}]
 
     ref_data = ascii_to_ebcdic("ORIGINAL MENU SCREEN WITH OPTIONS 1 THROUGH 9 LIST")
@@ -613,7 +613,8 @@ def test_fuzz_abend_code_in_results(state, tmp_path):
     state.fuzz_results = []
 
     try:
-        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER', txn_code='MCOR')
+        state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
+        state._fuzz_worker(fields, lines, 'ENTER', txn_code='MCOR')
         assert len(state.fuzz_results) == 1
         assert state.fuzz_results[0]['status'] == 'ABEND'
         assert state.fuzz_results[0]['abend_code'] == 'AEI9'
@@ -623,8 +624,7 @@ def test_fuzz_abend_code_in_results(state, tmp_path):
 def test_fuzz_recovered_flag(state, tmp_path):
     """After successful recovery, the result has recovered=True."""
     from tests.test_core import ascii_to_ebcdic
-    inject_file = tmp_path / "fuzz_rec.txt"
-    inject_file.write_text("BAD\n")
+    lines = [('BAD', 'test.txt')]
     fields = [{'row': 1, 'col': 10, 'length': 10}]
 
     ref_data = ascii_to_ebcdic("CICS MENU SELECT OPTION 1-9 PF KEYS AVAILABLE NOW")
@@ -648,7 +648,8 @@ def test_fuzz_recovered_flag(state, tmp_path):
     state.fuzz_results = []
 
     try:
-        state._fuzz_worker(fields, str(inject_file), 'SKIP', 'ENTER', txn_code='MCOR')
+        state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
+        state._fuzz_worker(fields, lines, 'ENTER', txn_code='MCOR')
         assert len(state.fuzz_results) == 1
         assert state.fuzz_results[0]['recovered'] is True
     finally:
@@ -662,8 +663,8 @@ def test_fuzz_stop(state):
     assert state.inject_running is False
 
 def test_fuzz_http_endpoint(web_server):
-    """POST /api/inject/fuzz with no fields returns error."""
-    data = post_json(web_server, '/api/inject/fuzz', {'fields': [], 'filename': 'alpha.txt'})
+    """POST /api/inject/fuzz with no field returns error."""
+    data = post_json(web_server, '/api/inject/fuzz', {})
     assert data['ok'] is False
 
 def test_fuzz_stop_http_endpoint(web_server):
