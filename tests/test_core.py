@@ -341,6 +341,33 @@ class TestScreenSimilarity:
         assert h3270.screen_similarity(data, None) == 0.0
 
 
+class TestScreenDiff:
+    def test_identical_no_diff(self, h3270):
+        """Identical screens produce empty diff."""
+        data = ascii_to_ebcdic("HELLO WORLD MENU")
+        assert h3270.screen_diff(data, data) == []
+
+    def test_different_content(self, h3270):
+        """Screens with different parsed fields produce diff entries."""
+        # Build minimal 3270 streams with SBA + SF + text
+        # WCC + SBA(0,0) + SF(unprotected) + "FOO"
+        import struct
+        def make_screen(text):
+            # F1=W, C0=WCC, 11=SBA, 40 00=addr(0,0), 1D=SF, 40=attr(unprotected)
+            return b'\xf1\xc0\x11\x40\x40\x1d\x40' + bytes([0xc1 + i if i < 9 else 0xd1 + i - 9 for i, c in enumerate(text.encode()) for _ in [None]][:0]) + h3270.get_ebcdic(text) + b'\xff\xef'
+        ref = make_screen("FOO")
+        got = make_screen("BAR")
+        diffs = h3270.screen_diff(ref, got)
+        assert len(diffs) >= 1
+        assert any('FOO' in d.get('ref', '') or 'BAR' in d.get('got', '') for d in diffs)
+
+    def test_none_input(self, h3270):
+        """None input produces empty diff."""
+        data = ascii_to_ebcdic("HELLO")
+        assert h3270.screen_diff(None, data) == []
+        assert h3270.screen_diff(data, None) == []
+
+
 class TestAidScanCategorize:
     def test_violation(self, h3270):
         """Response with security violation → VIOLATION."""

@@ -1568,11 +1568,8 @@ class Gr0gu3270:
         Returns similarity ratio 0.0-1.0.'''
         if data_a is None or data_b is None:
             return 0.0
-        text_a = self.get_ascii(data_a)
-        text_b = self.get_ascii(data_b)
-        # Remove control char placeholders for cleaner comparison
-        text_a = re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', text_a).strip()
-        text_b = re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', text_b).strip()
+        text_a = self._clean_screen_text(data_a).strip()
+        text_b = self._clean_screen_text(data_b).strip()
         if not text_a or not text_b:
             return 0.0
         # Simple character-level similarity (no external deps)
@@ -1581,6 +1578,32 @@ class Gr0gu3270:
         matches = sum(1 for a, b in zip(text_a, text_b) if a == b)
         max_len = max(len(text_a), len(text_b))
         return matches / max_len if max_len > 0 else 0.0
+
+    def _clean_screen_text(self, raw_data):
+        '''Converts EBCDIC data to clean printable ASCII text.'''
+        text = self.get_ascii(raw_data)
+        text = re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', text)
+        # Keep only printable ASCII (0x20-0x7E)
+        return ''.join(c if 0x20 <= ord(c) <= 0x7e else ' ' for c in text)
+
+    def screen_diff(self, data_a, data_b, cols=80):
+        '''Compares two server responses by their parsed screen map fields.
+        Returns list of {row, ref, got} dicts for fields that differ.'''
+        if data_a is None or data_b is None:
+            return []
+        fields_a = self.parse_screen_map(data_a)
+        fields_b = self.parse_screen_map(data_b)
+        # Build row→content maps
+        map_a = {(f['row'], f['col']): f.get('content', '') for f in fields_a}
+        map_b = {(f['row'], f['col']): f.get('content', '') for f in fields_b}
+        all_keys = sorted(set(map_a.keys()) | set(map_b.keys()))
+        diffs = []
+        for key in all_keys:
+            ref = map_a.get(key, '')
+            got = map_b.get(key, '')
+            if ref != got:
+                diffs.append({'row': key[0], 'ref': ref.strip(), 'got': got.strip()})
+        return diffs
 
     def aid_scan_categorize(self, server_data, ref_screen):
         '''Categorizes an AID response into SAME_SCREEN, VIOLATION, or NEW_SCREEN.'''

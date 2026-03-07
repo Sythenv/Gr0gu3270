@@ -525,6 +525,8 @@ class Gr0gu3270State:
             if aid_name in self.h.AIDS:
                 aid_byte = self.h.AIDS[aid_name][0]
 
+            sim_threshold = 0.8
+
             for idx, line in enumerate(lines):
                 if self.shutdown_flag.is_set() or not self.inject_running:
                     break
@@ -565,6 +567,7 @@ class Gr0gu3270State:
                         classification = self.h.classify_response(server_data)
                         self.h.detect_transaction_code(payload)
                         similarity = self.h.screen_similarity(server_data, ref_screen) if ref_screen else -1
+                        diff = self.h.screen_diff(ref_screen, server_data) if ref_screen else []
                     try:
                         self.h.client.send(server_data)
                         self.h.client.flush()
@@ -575,6 +578,7 @@ class Gr0gu3270State:
                         'status': classification,
                         'size': len(server_data),
                         'similarity': round(similarity, 3),
+                        'diff': diff,
                     })
                 else:
                     self.fuzz_results.append({
@@ -582,6 +586,7 @@ class Gr0gu3270State:
                         'status': 'NO_RESPONSE',
                         'size': 0,
                         'similarity': -1,
+                        'diff': [],
                     })
 
                 # Send follow-up keys
@@ -607,14 +612,14 @@ class Gr0gu3270State:
                 # Check if we're still on the right screen
                 if ref_screen and server_data:
                     sim = self.h.screen_similarity(server_data, ref_screen)
-                    if sim <= 0.8:
+                    if sim <= sim_threshold:
                         # Try replay to return
                         with self.lock:
                             self.h.aid_scan_replay_path = replay_path
                             last_resp = self.h.aid_scan_replay()
                         if last_resp:
                             sim2 = self.h.screen_similarity(last_resp, ref_screen)
-                            if sim2 <= 0.8:
+                            if sim2 <= sim_threshold:
                                 self.inject_status_msg = "Lost screen — fuzz stopped."
                                 break
                         else:
@@ -1474,6 +1479,7 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 .controls input[type="checkbox"] { accent-color: var(--head); }
 .fuzz-selected { background: var(--head) !important; color: var(--bg) !important; }
 .fuzz-selected td { color: var(--bg) !important; font-weight: bold; }
+.fuzz-diff { cursor: help; color: #f90; font-weight: bold; }
 .field-input:hover { background: rgba(0,150,154,0.2); }
 .btn { background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 17px; transition: all 0.15s; }
 .btn:hover { border-color: var(--head); color: var(--head); }
@@ -1655,7 +1661,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
         </div>
         <div id="fuzz-results-wrap" style="display:none;margin-top:8px;max-height:200px;overflow-y:auto">
           <table style="width:100%"><thead><tr>
-            <th>Payload</th><th>Status</th><th>Size</th><th>Sim%</th>
+            <th>Payload</th><th>Status</th><th>Sim%</th><th>Diff</th>
           </tr></thead><tbody id="fuzz-results-table"></tbody></table>
           <div id="fuzz-summary" style="margin-top:4px;color:var(--dim);font-size:12px"></div>
         </div>
@@ -2396,7 +2402,10 @@ async function loadFuzzResults() {
       const tr = document.createElement('tr');
       const col = FUZZ_STATUS_COLORS[r.status] || 'var(--fg)';
       const sim = r.similarity >= 0 ? Math.round(r.similarity * 100) : '-';
-      tr.innerHTML = '<td>'+r.payload+'</td><td style="color:'+col+'">'+r.status+'</td><td>'+r.size+'</td><td>'+sim+'</td>';
+      const diffHtml = r.diff && r.diff.length > 0
+        ? '<span class="fuzz-diff" title="'+r.diff.map(d=>'R'+d.row+': '+esc(d.got)).join('&#10;')+'">\u0394'+r.diff.length+'</span>'
+        : '';
+      tr.innerHTML = '<td>'+esc(r.payload)+'</td><td style="color:'+col+'">'+r.status+'</td><td>'+sim+'</td><td>'+diffHtml+'</td>';
       tbody.appendChild(tr);
     }
     const parts = Object.entries(d.summary).map(([k,v]) => k+':'+v);

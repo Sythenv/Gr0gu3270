@@ -584,6 +584,7 @@ def test_fuzz_worker_lost_screen_stops(state, tmp_path):
 
     class FakeClient:
         def send(self, data): pass
+        def flush(self): pass
     state.h.client = FakeClient()
     state.inject_running = True
 
