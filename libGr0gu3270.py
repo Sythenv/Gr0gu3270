@@ -245,13 +245,9 @@ class Gr0gu3270:
         self.pending_transaction = None
         self.transaction_history = []
 
-        # Security Audit (PR4)
-        self.audit_running = False
+        # Security Audit (PR4) — bulk audit removed, kept for SPOOL logging
         self.audit_results = []
-        self.audit_current_txn = None
-        self.audit_txn_list = []
-        self.audit_index = 0
-        self.audit_timestamp_sent = 0
+        self.last_server_data = None
 
         # AID Scan (PR5)
         self.aid_scan_running = False
@@ -1295,9 +1291,6 @@ class Gr0gu3270:
 
     # ---- PR4: Security Audit Methods ----
 
-    def get_audit_running(self):
-        return self.audit_running
-
     def classify_response(self, server_data):
         '''
         Classifies a server response for security audit purposes.
@@ -1334,21 +1327,6 @@ class Gr0gu3270:
                 return 'NOT_FOUND'
 
         return 'ACCESSIBLE'
-
-    def audit_start(self, txn_list):
-        '''Starts a security audit with the given list of transaction codes'''
-        self.audit_txn_list = txn_list
-        self.audit_index = 0
-        self.audit_results = []
-        self.audit_running = True
-        self.audit_current_txn = None
-        self.logger.debug("Security audit started with {} transactions".format(len(txn_list)))
-
-    def audit_stop(self):
-        '''Stops the running audit'''
-        self.audit_running = False
-        self.audit_current_txn = None
-        self.logger.debug("Security audit stopped")
 
     def build_clear_payload(self, is_tn3270e):
         '''Builds the CLEAR key payload. Pure function — no I/O.'''
@@ -1907,77 +1885,6 @@ class Gr0gu3270:
         self.logger.debug("SPOOL PoC FTP result: {}".format(status))
         return result
 
-    def audit_next(self):
-        '''
-        Sends the next transaction in the audit list.
-        Sends CLEAR first, then the transaction code.
-        Returns the transaction code sent, or None if done.
-        '''
-        if self.audit_index >= len(self.audit_txn_list):
-            self.audit_running = False
-            return None
-
-        txn_code = self.audit_txn_list[self.audit_index].strip()
-        self.audit_current_txn = txn_code
-        self.audit_timestamp_sent = time.time()
-
-        is_tn3270e = self.check_inject_3270e()
-
-        # Send CLEAR key first
-        self.server.send(self.build_clear_payload(is_tn3270e))
-
-        # Wait briefly for CLEAR response
-        try:
-            rlist, _, _ = select.select([self.server], [], [], 0.3)
-            if self.server in rlist:
-                clear_response = self.server.recv(BUFFER_MAX)
-                self.client.send(clear_response)
-        except Exception:
-            pass
-
-        # Send the transaction code
-        payload = self.build_txn_payload(txn_code, is_tn3270e)
-        self.write_database_log('C', 'Audit: sending {}'.format(txn_code), payload)
-        self.server.send(payload)
-        self.audit_index += 1
-
-        self.logger.debug("Audit: sent transaction {}".format(txn_code))
-        return txn_code
-
-    def audit_process_response(self, server_data):
-        '''Processes the server response for the current audit transaction'''
-        if not self.audit_current_txn:
-            return None
-
-        status = self.classify_response(server_data)
-        now = time.time()
-
-        # Get a text preview
-        ascii_text = self.get_ascii(server_data)
-        # Clean up preview - remove control char placeholders
-        preview = re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', ascii_text).strip()[:200]
-
-        result = {
-            'txn_code': self.audit_current_txn,
-            'status': status,
-            'response_preview': preview,
-            'response_len': len(server_data),
-            'timestamp': now,
-        }
-
-        self.audit_results.append(result)
-        self.write_audit_log(result)
-
-        # Emit finding for DENIED responses
-        if status == 'DENIED':
-            self.emit_finding('HIGH', 'SECURITY', 'Transaction {} denied by ESM'.format(self.audit_current_txn),
-                              txn_code=self.audit_current_txn,
-                              dedup_key='SECURITY:DENIED:{}'.format(self.audit_current_txn))
-
-        self.audit_current_txn = None
-
-        return result
-
     def write_audit_log(self, result):
         '''Writes an audit result to the database'''
         self.sql_cur.execute(
@@ -1986,30 +1893,6 @@ class Gr0gu3270:
              result['response_preview'], result['response_len'])
         )
         self.sql_con.commit()
-
-    def all_audit_results(self, start=0):
-        '''Gets all audit results from database'''
-        if start > 0:
-            self.sql_cur.execute("SELECT * FROM Audit WHERE ID > {}".format(start))
-        else:
-            self.sql_cur.execute("SELECT * FROM Audit")
-        return self.sql_cur.fetchall()
-
-    def export_audit_csv(self, csv_filename=False):
-        '''Exports audit results to CSV'''
-        if not csv_filename:
-            csv_filename = self.project_name + "_audit.csv"
-
-        with open(csv_filename, "w", newline="") as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(['Timestamp', 'Transaction', 'Status', 'Response Preview', 'Response Length'])
-            for row in self.all_audit_results():
-                timestamp = float(row[1])
-                dt = datetime.datetime.fromtimestamp(timestamp)
-                writer.writerow([dt, row[2], row[3], row[4], row[5]])
-
-        self.logger.debug('Audit export finished: {}'.format(csv_filename))
-        return csv_filename
 
     # ---- Single Transaction Scan Methods ----
 
@@ -2073,107 +1956,6 @@ class Gr0gu3270:
             'numeric': numeric_count,
             'hidden_fields': hidden_fields,
         }
-
-    def scan_analyze(self, server_data, txn_code, duration_ms):
-        '''Orchestrates all analyses on a single transaction response.'''
-        status = self.classify_response(server_data)
-        abends = self.detect_abend(server_data)
-        fields = self.parse_screen_map(server_data)
-        self.refresh_aids(server_data)
-        esm = self.fingerprint_esm(server_data)
-        field_analysis = self.analyze_screen_fields(fields)
-
-        # Build preview
-        ascii_text = self.get_ascii(server_data)
-        preview = re.sub(r'\[0x[0-9A-Fa-f]{2}\]', '', ascii_text).strip()[:200]
-
-        return {
-            'txn_code': txn_code,
-            'timestamp': time.time(),
-            'status': status,
-            'abends': abends,
-            'field_analysis': field_analysis,
-            'pf_keys': list(self.found_aids),
-            'esm': esm,
-            'response_len': len(server_data),
-            'duration_ms': round(duration_ms, 2),
-            'response_preview': preview,
-        }
-
-    def scan_send_txn(self, txn_code):
-        '''Sends CLEAR + transaction, waits for response. Returns (server_data, duration_ms).'''
-        try:
-            is_tn3270e = self.check_inject_3270e()
-
-            # Send CLEAR
-            self.server.send(self.build_clear_payload(is_tn3270e))
-            try:
-                rlist, _, _ = select.select([self.server], [], [], 0.3)
-                if self.server in rlist:
-                    clear_response = self.server.recv(BUFFER_MAX)
-                    self.client.send(clear_response)
-            except Exception:
-                pass
-
-            # Send transaction
-            payload = self.build_txn_payload(txn_code, is_tn3270e)
-            self.write_database_log('C', 'Scan: sending {}'.format(txn_code), payload)
-            self.server.send(payload)
-            start_time = time.time()
-
-            # Wait for response
-            rlist, _, _ = select.select([self.server], [], [], 3)
-            if self.server in rlist:
-                server_data = self.server.recv(BUFFER_MAX)
-                duration_ms = (time.time() - start_time) * 1000
-                self.client.send(server_data)
-                self.write_database_log('S', 'Scan response for {}'.format(txn_code), server_data)
-                return (server_data, duration_ms)
-        except Exception as e:
-            self.logger.error("Scan send error: {}".format(e))
-        return (None, 0)
-
-    def write_scan_result(self, report):
-        '''Writes a scan result to the database. Returns row ID.'''
-        self.sql_cur.execute(
-            "INSERT INTO ScanResults ('TIMESTAMP', 'TXN_CODE', 'STATUS', 'ABENDS', 'FIELD_ANALYSIS', 'PF_KEYS', 'ESM_TYPE', 'RESPONSE_LEN', 'DURATION_MS', 'RESPONSE_PREVIEW', 'FULL_REPORT') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(report['timestamp']), report['txn_code'], report['status'],
-             json.dumps(report.get('abends', [])),
-             json.dumps(report.get('field_analysis', {})),
-             json.dumps(report.get('pf_keys', [])),
-             report.get('esm', {}).get('esm', 'UNKNOWN'),
-             report.get('response_len', 0),
-             report.get('duration_ms', 0),
-             report.get('response_preview', ''),
-             json.dumps(report))
-        )
-        self.sql_con.commit()
-        return self.sql_cur.lastrowid
-
-    def all_scan_results(self, start=0):
-        '''Gets all scan results from database.'''
-        if start > 0:
-            self.sql_cur.execute("SELECT * FROM ScanResults WHERE ID > ?", (start,))
-        else:
-            self.sql_cur.execute("SELECT * FROM ScanResults")
-        return self.sql_cur.fetchall()
-
-    def export_scan_csv(self, csv_filename=False):
-        '''Exports scan results to CSV.'''
-        if not csv_filename:
-            csv_filename = self.project_name + "_scan.csv"
-
-        with open(csv_filename, "w", newline="") as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(['Timestamp', 'Transaction', 'Status', 'ESM', 'ABENDs',
-                             'Response Length', 'Duration (ms)', 'Response Preview'])
-            for row in self.all_scan_results():
-                timestamp = float(row[1])
-                dt = datetime.datetime.fromtimestamp(timestamp)
-                writer.writerow([dt, row[2], row[3], row[7], row[4], row[8], row[9], row[10]])
-
-        self.logger.debug('Scan export finished: {}'.format(csv_filename))
-        return csv_filename
 
     def list_injection_files(self):
         '''Lists available injection files from the injections/ directory'''
@@ -2242,6 +2024,7 @@ class Gr0gu3270:
 
     def handle_server(self,server_data):
         log_line = ''
+        self.last_server_data = server_data
         if len(server_data) > 0:
             if self.hack_on:
                 log_line = self.hack_on_logline()

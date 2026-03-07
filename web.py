@@ -119,23 +119,17 @@ class Gr0gu3270State:
         self.last_log_id = 0
         self.last_abend_id = 0
         self.last_txn_id = 0
-        self.last_audit_id = 0
         self.inject_running = False
         self.inject_status_msg = "Not Ready."
-        self.audit_thread = None
         self.inject_thread = None
         self.disabled_tabs = []
         self.shutdown_flag = threading.Event()
         self.connection_ready = threading.Event()
-        self.scan_running = False
-        self.scan_result = None
-        self.scan_thread = None
         self.aid_scan_thread = None
         self.last_aid_scan_id = 0
         # Command queue: HTTP threads queue (label, payload) tuples,
         # daemon thread sends them to the server socket.
         self._cmd_queue = queue.Queue()
-        self.last_scan_id = 0
         self.fuzz_progress = {'current': 0, 'total': 0, 'payload': ''}
         self.fuzz_results = []
         self.macro_running = False
@@ -152,7 +146,6 @@ class Gr0gu3270State:
                 'hack_color_on': bool(self.h.hack_color_on),
                 'abend_detection': bool(self.h.abend_detection),
                 'transaction_tracking': bool(self.h.transaction_tracking),
-                'audit_running': bool(self.h.audit_running),
                 'aid_scan_running': bool(self.h.aid_scan_running),
                 'disabled_tabs': self.disabled_tabs,
                 'version': libGr0gu3270.__version__,
@@ -225,7 +218,11 @@ class Gr0gu3270State:
                     'length': f['length'],
                     'content': content,
                 })
-            return result
+            esm = 'UNKNOWN'
+            if self.h.last_server_data:
+                esm_info = self.h.fingerprint_esm(self.h.last_server_data)
+                esm = esm_info.get('esm', 'UNKNOWN')
+            return {'fields': result, 'esm': esm}
 
     def get_transactions(self, since=0):
         with self.lock:
@@ -246,33 +243,6 @@ class Gr0gu3270State:
     def get_transaction_stats(self):
         with self.lock:
             return self.h.get_transaction_stats()
-
-    def get_audit_results(self, since=0):
-        with self.lock:
-            rows = self.h.all_audit_results(since)
-            result = []
-            for row in rows:
-                preview = row[4][:80] if row[4] else ''
-                result.append({
-                    'id': row[0],
-                    'timestamp': row[1],
-                    'timestamp_fmt': str(datetime.datetime.fromtimestamp(float(row[1]))),
-                    'txn_code': row[2],
-                    'status': row[3],
-                    'preview': preview,
-                    'response_len': row[5],
-                })
-            return result
-
-    def get_audit_summary(self):
-        with self.lock:
-            results = self.h.audit_results
-            counts = {'ACCESSIBLE': 0, 'DENIED': 0, 'ABEND': 0, 'NOT_FOUND': 0, 'ERROR': 0, 'UNKNOWN': 0}
-            for r in results:
-                s = r.get('status', 'UNKNOWN')
-                if s in counts:
-                    counts[s] += 1
-            return counts
 
     def get_statistics(self):
         with self.lock:
@@ -787,68 +757,6 @@ class Gr0gu3270State:
             self.h.set_transaction_tracking(0 if current else 1)
             return {'on': bool(self.h.get_transaction_tracking())}
 
-    def audit_start(self, data):
-        filename = data.get('filename', '')
-        if not filename:
-            return {'ok': False, 'message': 'No file specified.'}
-
-        full_path = os.path.join('injections', filename)
-        if not os.path.isfile(full_path):
-            return {'ok': False, 'message': 'File not found.'}
-
-        with open(full_path, 'r') as f:
-            txn_list = [line.strip() for line in f if line.strip()]
-
-        if not txn_list:
-            return {'ok': False, 'message': 'Transaction list is empty.'}
-
-        with self.lock:
-            self.h.audit_start(txn_list)
-
-        self.audit_thread = threading.Thread(
-            target=self._audit_worker, daemon=True)
-        self.audit_thread.start()
-        return {'ok': True, 'message': 'Auditing {} transactions...'.format(len(txn_list))}
-
-    def _audit_worker(self):
-        try:
-            while True:
-                if self.shutdown_flag.is_set():
-                    break
-
-                with self.lock:
-                    if not self.h.get_audit_running():
-                        break
-                    txn = self.h.audit_next()
-                    if txn is None:
-                        break
-                    server_sock = self.h.server
-
-                # Wait for response — select OUTSIDE lock so HTTP stays responsive
-                time.sleep(0.1)
-                try:
-                    rlist, _, _ = select.select([server_sock], [], [], 2)
-                    if server_sock in rlist:
-                        server_data = server_sock.recv(libGr0gu3270.BUFFER_MAX)
-                        if len(server_data) > 0:
-                            with self.lock:
-                                self.h.handle_server(server_data)
-                except Exception:
-                    pass
-
-                time.sleep(0.3)
-
-        except Exception as e:
-            logging.getLogger(__name__).error("Audit error: {}".format(e))
-        finally:
-            with self.lock:
-                self.h.audit_stop()
-
-    def audit_stop(self):
-        with self.lock:
-            self.h.audit_stop()
-            return {'ok': True, 'message': 'Audit stopped.'}
-
     def spool_check(self):
         with self.lock:
             result = self.h.spool_check()
@@ -872,89 +780,11 @@ class Gr0gu3270State:
             csv_file = self.h.export_csv()
             return {'ok': True, 'filename': csv_file}
 
-    def export_audit_csv(self):
-        with self.lock:
-            csv_file = self.h.export_audit_csv()
-            return {'ok': True, 'filename': csv_file}
-
-    def get_scan_status(self):
-        return {'running': self.scan_running, 'result': self.scan_result}
-
-    def get_scan_results(self, since=0):
-        with self.lock:
-            rows = self.h.all_scan_results(since)
-            result = []
-            for row in rows:
-                result.append({
-                    'id': row[0],
-                    'timestamp': row[1],
-                    'timestamp_fmt': str(datetime.datetime.fromtimestamp(float(row[1]))),
-                    'txn_code': row[2],
-                    'status': row[3],
-                    'abends': row[4],
-                    'field_analysis': row[5],
-                    'pf_keys': row[6],
-                    'esm_type': row[7],
-                    'response_len': row[8],
-                    'duration_ms': row[9],
-                    'response_preview': row[10],
-                    'full_report': row[11],
-                })
-            return result
-
-    def scan_txn(self, data):
-        txn_code = data.get('txn_code', '').strip().upper()
-        if not txn_code or len(txn_code) > 8 or not re.match(r'^[A-Z0-9@#$]+$', txn_code):
-            return {'ok': False, 'message': 'Invalid transaction code (1-8 chars, A-Z0-9@#$).'}
-        if not self.connection_ready.is_set():
-            return {'ok': False, 'message': 'Not connected.'}
-        if self.h.audit_running:
-            return {'ok': False, 'message': 'Audit is running.'}
-        if self.scan_running:
-            return {'ok': False, 'message': 'Scan already running.'}
-
-        self.scan_running = True
-        self.scan_result = None
-        self.scan_thread = threading.Thread(
-            target=self._scan_worker, args=(txn_code,), daemon=True)
-        self.scan_thread.start()
-        return {'ok': True, 'message': 'Scanning {}...'.format(txn_code)}
-
-    def _scan_worker(self, txn_code):
-        try:
-            with self.lock:
-                server_data, duration_ms = self.h.scan_send_txn(txn_code)
-
-            if server_data is None:
-                self.scan_result = {'txn_code': txn_code, 'status': 'ERROR',
-                                    'error': 'No response from server'}
-                return
-
-            with self.lock:
-                report = self.h.scan_analyze(server_data, txn_code, duration_ms)
-                self.h.write_scan_result(report)
-
-            self.scan_result = report
-        except Exception as e:
-            self.scan_result = {'txn_code': txn_code, 'status': 'ERROR',
-                                'error': str(e)}
-        finally:
-            self.scan_running = False
-
-    def export_scan_csv(self):
-        with self.lock:
-            csv_file = self.h.export_scan_csv()
-            return {'ok': True, 'filename': csv_file}
-
     # ---- AID Scan (PR5) ----
 
     def aid_scan_start(self):
         if not self.connection_ready.is_set():
             return {'ok': False, 'message': 'Not connected.'}
-        if self.h.audit_running:
-            return {'ok': False, 'message': 'Audit is running.'}
-        if self.scan_running:
-            return {'ok': False, 'message': 'Scan is running.'}
         if self.h.aid_scan_running:
             return {'ok': False, 'message': 'AID scan already running.'}
 
@@ -1066,10 +896,6 @@ class Gr0gu3270State:
         with self.lock:
             if self.h.is_offline():
                 return
-            if self.h.audit_running:
-                return
-            if self.scan_running:
-                return
             if self.h.aid_scan_running:
                 return
             if self.inject_running:
@@ -1149,11 +975,6 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(self.state.get_transactions(since))
         elif path == '/api/transaction_stats':
             self._send_json(self.state.get_transaction_stats())
-        elif path == '/api/audit_results':
-            since = int(params.get('since', ['0'])[0])
-            self._send_json(self.state.get_audit_results(since))
-        elif path == '/api/audit_summary':
-            self._send_json(self.state.get_audit_summary())
         elif path == '/api/statistics':
             self._send_json(self.state.get_statistics())
         elif path == '/api/aids':
@@ -1162,11 +983,6 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(self.state.get_inject_status())
         elif path == '/api/injection_files':
             self._send_json(self.state.get_injection_files())
-        elif path == '/api/scan/status':
-            self._send_json(self.state.get_scan_status())
-        elif path == '/api/scan/results':
-            since = int(params.get('since', ['0'])[0])
-            self._send_json(self.state.get_scan_results(since))
         elif path == '/api/aid_scan/results':
             since = int(params.get('since', ['0'])[0])
             self._send_json(self.state.get_aid_scan_results(since))
@@ -1209,23 +1025,8 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
         elif path == '/api/transaction_tracking':
             result = self.state.toggle_transaction_tracking()
             self._send_json(result)
-        elif path == '/api/audit/start':
-            result = self.state.audit_start(data)
-            self._send_json(result)
-        elif path == '/api/audit/stop':
-            result = self.state.audit_stop()
-            self._send_json(result)
         elif path == '/api/export_csv':
             result = self.state.export_csv()
-            self._send_json(result)
-        elif path == '/api/audit/export':
-            result = self.state.export_audit_csv()
-            self._send_json(result)
-        elif path == '/api/scan/start':
-            result = self.state.scan_txn(data)
-            self._send_json(result)
-        elif path == '/api/scan/export':
-            result = self.state.export_scan_csv()
             self._send_json(result)
         elif path == '/api/aid_scan/start':
             result = self.state.aid_scan_start()
@@ -1622,6 +1423,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
         <div class="toggle-pill" id="tgl-color" onclick="toggleHackColor()" title="Hack Color">C</div>
         <div class="toggle-pill on" id="tgl-abend" style="display:none">A</div>
         <div class="toggle-pill on" id="tgl-txn" style="display:none">T</div>
+        <div class="toggle-pill" onclick="toggleHelpModal()" title="Method &amp; Help" style="font-weight:bold">?</div>
       </div>
     </div>
   </div>
@@ -1634,6 +1436,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
   <div class="panel-screen" id="panel-screen">
     <div class="panel-header" onclick="togglePanel('panel-screen')">
       <span class="panel-title">Screen Map</span>
+      <span id="smap-esm" style="font-size:13px;color:var(--dim);margin-left:8px"></span>
       <button class="btn" id="smap-filter-btn" onclick="event.stopPropagation();toggleSmapFilter()" style="margin-left:auto;font-size:15px;padding:2px 8px">SHOW ALL</button>
     </div>
     <div class="panel-body">
@@ -1691,20 +1494,15 @@ const ACTIONS = [
   {id:'hack-fields', label:'Hack Fields', group:0},
   {id:'hack-color', label:'Hack Color', group:0},
   {id:'inject-keys', label:'Send Keys', group:0},
-  {id:'scan', label:'Scan', group:2},
-  {id:'audit', label:'Bulk Audit', group:2},
-  {id:'aid-scan', label:'AID Scan', group:2},
-  {id:'spool', label:'SPOOL/RCE', group:2},
-  {id:'logs', label:'Logs', group:3, tall:true},
-  {id:'statistics', label:'Stats', group:3},
-  {id:'methodology', label:'Method', group:4, tall:true},
-  {id:'help', label:'Help', group:4},
+  {id:'aid-scan', label:'AID Scan', group:0},
+  {id:'spool', label:'SPOOL/RCE', group:1},
+  {id:'logs', label:'Logs', group:2, tall:true},
+  {id:'statistics', label:'Stats', group:2},
 ];
 
 const GROUPS = [
-  {id:'grp-info', label:'GUIDE', items:['methodology','help'], location:'bottom'},
-  {id:'grp-hacks', label:'HACKS', items:['hack-fields','hack-color','inject-keys'], location:'top'},
-  {id:'grp-scan', label:'SCANNING', items:['scan','audit','aid-scan','spool'], location:'top'},
+  {id:'grp-hacks', label:'HACKS', items:['hack-fields','hack-color','inject-keys','aid-scan'], location:'top'},
+  {id:'grp-system', label:'SYSTEM', items:['spool'], location:'top'},
   {id:'grp-data', label:'DATA', items:['logs','statistics'], location:'top'},
 ];
 
@@ -1712,7 +1510,7 @@ let activeAction = null;
 let activeGroup = null;
 let pollers = {};
 let disabledTabs = [];
-let logSince = 0, abendSince = 0, txnSince = 0, auditSince = 0;
+let logSince = 0, abendSince = 0, txnSince = 0;
 
 // ---- Findings data layer ----
 let rawAbends = [];
@@ -1980,16 +1778,12 @@ function toggleAction(id) {
 function stopActionPollers() {
   if (pollers.aids) { clearInterval(pollers.aids); delete pollers.aids; }
   if (pollers.actionLogs) { clearInterval(pollers.actionLogs); delete pollers.actionLogs; }
-  if (pollers.actionAudit) { clearInterval(pollers.actionAudit); delete pollers.actionAudit; }
-  if (pollers.actionAuditSummary) { clearInterval(pollers.actionAuditSummary); delete pollers.actionAuditSummary; }
 }
 
 function startActionPollers(id) {
   if (id === 'inject-keys') { loadAids(); pollers.aids = setInterval(loadAids, 1000); }
   if (id === 'logs') { loadLogs(); pollers.actionLogs = setInterval(loadLogs, 1000); }
-  if (id === 'audit') { loadAuditResults(); loadAuditSummary(); pollers.actionAudit = setInterval(loadAuditResults, 2000); pollers.actionAuditSummary = setInterval(loadAuditSummary, 3000); }
   if (id === 'statistics') loadStatistics();
-  if (id === 'methodology') { buildMethodology(); }
 }
 
 function buildActionPanels() {
@@ -2022,36 +1816,6 @@ function buildActionPanels() {
       <span id="send-keys-status" style="font-size:17px;color:var(--dim)">Ready.</span>
     </div>
     <div class="controls checkbox-grid" id="aid-checkboxes"></div>`;
-
-  // Scan
-  document.getElementById('apanel-scan').innerHTML = `
-    <div class="controls">
-      <input type="text" id="scan-txn-input" maxlength="8" placeholder="e.g. CEMT" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:17px;width:100px;text-transform:uppercase">
-      <button class="btn" onclick="scanStart()">SCAN</button>
-      <button class="btn" onclick="scanExport()">EXPORT</button>
-      <span id="scan-status-msg" style="font-size:17px;color:var(--dim)"></span>
-    </div>
-    <div id="scan-report" style="display:none;background:var(--input-bg);border:1px solid var(--border);padding:8px;font-size:17px;max-height:140px;overflow-y:auto"></div>`;
-
-  // Bulk Audit
-  document.getElementById('apanel-audit').innerHTML = `
-    <div class="controls">
-      <select id="audit-file-select"><option value="">-- File --</option></select>
-      <button class="btn" onclick="auditStart()">START</button>
-      <button class="btn danger" onclick="auditStop()">STOP</button>
-      <button class="btn" onclick="auditExport()">EXPORT</button>
-      <span id="audit-status-msg" style="font-size:17px;color:var(--dim)">Ready.</span>
-    </div>
-    <div class="summary-bar" id="audit-summary" style="margin-top:6px">
-      <span><span class="dot dot-accessible"></span><b id="sum-accessible">0</b></span>
-      <span><span class="dot dot-denied"></span><b id="sum-denied">0</b></span>
-      <span><span class="dot dot-abend"></span><b id="sum-abend">0</b></span>
-      <span><span class="dot dot-not_found"></span><b id="sum-not_found">0</b></span>
-      <span><span class="dot dot-error"></span><b id="sum-error">0</b></span>
-    </div>
-    <table style="margin-top:6px"><thead><tr>
-      <th>ID</th><th>Time</th><th>Txn</th><th>Status</th><th>Preview</th>
-    </tr></thead><tbody id="audit-table"></tbody></table>`;
 
   // AID Scan
   document.getElementById('apanel-aid-scan').innerHTML = `
@@ -2102,14 +1866,6 @@ function buildActionPanels() {
   // Statistics
   document.getElementById('apanel-statistics').innerHTML = '<div id="stats-content" style="padding:4px"></div>';
 
-  // Methodology
-  document.getElementById('apanel-methodology').innerHTML = '<div id="method-root"></div>';
-
-  // Help
-  document.getElementById('apanel-help').innerHTML = '<div class="help-content" id="help-content"></div>';
-  loadHelp();
-
-  loadInjectionFiles();
 }
 
 // ---- Always-on pollers for dashboard panels ----
@@ -2221,9 +1977,18 @@ let smapData = [];
 
 async function loadScreenMap() {
   try {
-    smapData = await api('/api/screen_map');
+    const resp = await api('/api/screen_map');
+    smapData = Array.isArray(resp) ? resp : (resp.fields || []);
+    const esmEl = document.getElementById('smap-esm');
+    const esm = resp && resp.esm;
+    if (esmEl && esm && esm !== 'UNKNOWN') {
+      esmEl.textContent = 'ESM: ' + esm;
+      esmEl.style.color = 'var(--head)';
+    } else if (esmEl) {
+      esmEl.textContent = '';
+    }
     renderScreenMap();
-  } catch(e) {}
+  } catch(e) { console.error('loadScreenMap error:', e); }
 }
 
 function renderScreenMap() {
@@ -2285,34 +2050,6 @@ async function loadTransactions() {
   } catch(e) {}
 }
 
-async function loadAuditResults() {
-  try {
-    const data = await api('/api/audit_results?since=' + auditSince);
-    const tbody = document.getElementById('audit-table');
-    if (!tbody) return;
-    data.forEach(r => {
-      auditSince = Math.max(auditSince, r.id);
-      const tr = document.createElement('tr');
-      tr.className = 'status-' + r.status.toLowerCase();
-      tr.innerHTML = '<td>'+r.id+'</td><td>'+esc(r.timestamp_fmt)+'</td><td>'+esc(r.txn_code)+'</td><td>'+esc(r.status)+'</td><td>'+esc(r.preview)+'</td>';
-      tbody.appendChild(tr);
-    });
-  } catch(e) {}
-}
-
-async function loadAuditSummary() {
-  try {
-    const s = await api('/api/audit_summary');
-    const el = document.getElementById('sum-accessible');
-    if (!el) return;
-    el.textContent = s.ACCESSIBLE || 0;
-    document.getElementById('sum-denied').textContent = s.DENIED || 0;
-    document.getElementById('sum-abend').textContent = s.ABEND || 0;
-    document.getElementById('sum-not_found').textContent = s.NOT_FOUND || 0;
-    document.getElementById('sum-error').textContent = s.ERROR || 0;
-  } catch(e) {}
-}
-
 async function loadStatistics() {
   try {
     const s = await api('/api/statistics');
@@ -2328,10 +2065,6 @@ async function loadStatistics() {
   } catch(e) {}
 }
 
-async function loadHelp() {
-  document.getElementById('help-content').textContent = 'Gr0gu3270 - TN3270 Penetration Testing Toolkit\n\nMain view: Screen Map (top) + Events timeline (bottom)\nAction bar: click tabs to expand tools\nLogs & Audit moved to action bar (on-demand)\n\nKeyboard Shortcuts:\n  Ctrl+H  Toggle Hack Fields\n  Ctrl+G  Toggle Hack Color\n  Ctrl+B  Toggle ABEND Detection\n  Ctrl+T  Toggle Transaction Tracking\n  Esc     Close action panel';
-}
-
 async function loadAids() {
   try {
     const data = await api('/api/aids');
@@ -2344,21 +2077,6 @@ async function loadAids() {
       const label = document.createElement('label');
       label.innerHTML = '<input type="checkbox" data-aid="'+name+'" '+checked+'> '+name + (found ? ' *' : '');
       container.appendChild(label);
-    });
-  } catch(e) {}
-}
-
-async function loadInjectionFiles() {
-  try {
-    const files = await api('/api/injection_files');
-    ['audit-file-select'].forEach(id => {
-      const sel = document.getElementById(id);
-      if (!sel) return;
-      files.forEach(f => {
-        const opt = document.createElement('option');
-        opt.value = f; opt.textContent = f;
-        sel.appendChild(opt);
-      });
     });
   } catch(e) {}
 }
@@ -2398,21 +2116,6 @@ async function sendSelectedKeys() {
   document.getElementById('send-keys-status').textContent = r.message || 'Sent.';
 }
 
-async function auditStart() {
-  const sel = document.getElementById('audit-file-select');
-  if (!sel.value) { toast('Select an audit file first', 'error'); return; }
-  const r = await post('/api/audit/start', {filename: sel.value});
-  document.getElementById('audit-status-msg').textContent = r.message;
-  toast('Audit started', 'success');
-}
-async function auditStop() {
-  const r = await post('/api/audit/stop');
-  document.getElementById('audit-status-msg').textContent = r.message;
-}
-async function auditExport() {
-  const r = await post('/api/audit/export');
-  document.getElementById('audit-status-msg').textContent = r.ok ? 'Exported: '+r.filename : 'Failed.';
-}
 async function exportCsv() {
   const r = await post('/api/export_csv');
   document.getElementById('export-status').textContent = r.ok ? 'Exported: '+r.filename : 'Failed.';
@@ -2525,54 +2228,6 @@ async function spoolPoc() {
   } else {
     document.getElementById('spool-status-msg').textContent = r.message || 'Error';
   }
-}
-
-// ---- Scan ----
-let scanPoller = null;
-async function scanStart() {
-  const txn = document.getElementById('scan-txn-input').value.trim().toUpperCase();
-  if (!txn) { toast('Enter a transaction code', 'error'); return; }
-  document.getElementById('scan-status-msg').textContent = 'Scanning ' + txn + '...';
-  document.getElementById('scan-report').style.display = 'none';
-  const r = await post('/api/scan/start', {txn_code: txn});
-  if (!r.ok) { document.getElementById('scan-status-msg').textContent = r.message; return; }
-  scanPoller = setInterval(scanPoll, 500);
-}
-async function scanPoll() {
-  try {
-    const s = await api('/api/scan/status');
-    if (!s.running && s.result) {
-      clearInterval(scanPoller); scanPoller = null;
-      document.getElementById('scan-status-msg').textContent = 'Done.';
-      renderScanReport(s.result);
-    }
-  } catch(e) { clearInterval(scanPoller); scanPoller = null; }
-}
-function renderScanReport(r) {
-  const el = document.getElementById('scan-report');
-  el.style.display = 'block';
-  const sc = {ACCESSIBLE:C.text,DENIED:C.alert,ABEND:C.alert,NOT_FOUND:C.dim,ERROR:C.alert}[r.status]||C.dim;
-  let h = '<span style="font-weight:bold">'+esc(r.txn_code)+'</span> ';
-  h += '<span style="background:'+sc+';color:var(--bg);padding:1px 8px;font-weight:bold">'+esc(r.status)+'</span> ';
-  h += '<span style="color:var(--dim)">'+((r.duration_ms||0).toFixed(1))+'ms | '+(r.response_len||0)+'B</span>';
-  if (r.error) { h += '<div style="color:var(--alert);margin-top:4px">'+esc(r.error)+'</div>'; el.innerHTML=h; return; }
-  const esm = r.esm||{};
-  h += '<div style="margin-top:4px">ESM: '+esc(esm.esm||'?');
-  if (esm.evidence&&esm.evidence.length) h += ' ('+esm.evidence.map(esc).join(', ')+')';
-  h += '</div>';
-  const fa = r.field_analysis||{};
-  h += '<div>Fields: '+fa.total+' total, '+fa.input+' input, '+fa.hidden+' hidden</div>';
-  if (fa.hidden_fields&&fa.hidden_fields.length) {
-    h += '<div style="color:var(--alert)">Hidden: ';
-    h += fa.hidden_fields.map(f=>'['+f.row+','+f.col+'] '+esc(f.content)).join('; ');
-    h += '</div>';
-  }
-  if (r.response_preview) h += '<div style="margin-top:4px;padding:4px;background:var(--input-bg);border:1px solid var(--border);white-space:pre-wrap;max-height:60px;overflow-y:auto">'+esc(r.response_preview)+'</div>';
-  el.innerHTML = h;
-}
-async function scanExport() {
-  const r = await post('/api/scan/export');
-  document.getElementById('scan-status-msg').textContent = r.ok ? 'Exported: '+r.filename : 'Failed.';
 }
 
 // ---- Table sorting ----
@@ -2768,12 +2423,12 @@ function renderPhaseContent() {
 function renderAbendRefTable() {
   const detectedCodes = new Set(rawAbends.map(a => a.code));
   let h = '<div class="abend-ref-table"><div class="section-title">ABEND Reference (' + detectedCodes.size + ' detected in session)</div>';
-  h += '<table><thead><tr><th>Code</th><th>Description</th><th>Web Analogy</th><th>Seen</th></tr></thead><tbody>';
+  h += '<table><thead><tr><th>Code</th><th>Description</th><th>Web Analogy</th><th style="text-align:center;width:16px"></th></tr></thead><tbody>';
   ABEND_REF.forEach(a => {
     const detected = detectedCodes.has(a.code);
     h += '<tr class="' + (detected ? 'abend-ref-detected' : '') + '">';
     h += '<td>' + esc(a.code) + '</td><td>' + esc(a.desc) + '</td><td>' + esc(a.analogy) + '</td>';
-    h += '<td>' + (detected ? '<span style="color:var(--alert)">YES</span>' : '') + '</td>';
+    h += '<td style="text-align:center">' + (detected ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--text)"></span>' : '') + '</td>';
     h += '</tr>';
   });
   h += '</tbody></table></div>';
@@ -2847,9 +2502,41 @@ async function macroPoll() {
 }
 loadMacroList();
 
+// ---- Help/Method modal ----
+function toggleHelpModal() {
+  let overlay = document.getElementById('help-overlay');
+  if (overlay) { overlay.remove(); return; }
+  overlay = document.createElement('div');
+  overlay.id = 'help-overlay';
+  overlay.className = 'fuzz-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = '<div class="fuzz-popup" style="max-width:800px;max-height:80vh;overflow-y:auto">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+    '<h3 style="margin:0">Method &amp; Help</h3>' +
+    '<button class="btn" onclick="document.getElementById(\'help-overlay\').remove()" style="font-size:18px">\u2715</button></div>' +
+    '<div id="help-method-root"></div>' +
+    '<hr style="border-color:var(--border);margin:12px 0">' +
+    '<div id="help-content-area" style="white-space:pre-wrap;font-size:15px;color:var(--dim)"></div></div>';
+  document.body.appendChild(overlay);
+  // Build methodology in modal
+  const root = document.getElementById('help-method-root');
+  if (root) {
+    let h = '<div class="method-phases">';
+    const phases = Object.keys(METHOD_DATA);
+    phases.forEach((pid, i) => {
+      if (i > 0) h += '<span class="method-arrow">&#9654;</span>';
+      h += '<div class="method-phase' + (pid === activePhase ? ' active' : '') + '" onclick="showPhase(\''+pid+'\')">' + esc(METHOD_DATA[pid].label) + '</div>';
+    });
+    h += '</div><div id="method-content-area"></div>';
+    root.innerHTML = h;
+    renderPhaseContent();
+  }
+  // Help text
+  document.getElementById('help-content-area').textContent = 'Gr0gu3270 - TN3270 Penetration Testing Toolkit\n\nMain view: Screen Map (top) + Findings (bottom)\nAction bar: click group headers to expand tools\n\nKeyboard Shortcuts:\n  Ctrl+H  Toggle Hack Fields\n  Ctrl+G  Toggle Hack Color\n  Ctrl+B  Toggle ABEND Detection\n  Ctrl+T  Toggle Transaction Tracking\n  Esc     Close action panel\n  ?       Open this help modal';
+}
+
 // ---- Init ----
 buildActionBar();
-toggleGroup('grp-info');
 startDashboardPollers();
 // ---- Fuzz popup (double-click on field) ----
 let fuzzPoller = null;
@@ -2867,11 +2554,6 @@ function openFuzzPopup(field) {
     <h3>Fuzz Field</h3>
     <div class="fuzz-field-info">R${field.row},C${field.col} | ${type} | Len ${field.length} | "${esc(field.content || '')}"</div>
     <div class="fuzz-controls">
-      <span>Keys:</span>
-      <select id="fp-key" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit">
-        <option value="ENTER">ENTER</option><option value="ENTER+CLEAR">ENTER+CLEAR</option>
-        <option value="ENTER+PF3">ENTER+PF3</option><option value="ENTER+PF3+CLEAR">ENTER+PF3+CLEAR</option>
-      </select>
       <button class="btn" id="fp-start" onclick="fuzzPopupStart()">START</button>
       <button class="btn danger" id="fp-stop" onclick="fuzzPopupStop()" style="display:none">STOP</button>
       <button class="btn" onclick="closeFuzzPopup()" style="margin-left:auto">\u2715</button>
@@ -2896,7 +2578,7 @@ function closeFuzzPopup() {
 
 async function fuzzPopupStart() {
   if (!fuzzField) return;
-  const key = document.getElementById('fp-key').value;
+  const key = 'ENTER';
   const r = await post('/api/inject/fuzz', {
     field: {row: fuzzField.row, col: fuzzField.col, length: fuzzField.length,
             hidden: !!fuzzField.hidden, numeric: !!fuzzField.numeric},

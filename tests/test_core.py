@@ -214,51 +214,6 @@ class TestAnalyzeScreenFields:
         assert result['hidden_fields'][0]['content'] == 'PASS'
 
 
-class TestScanAnalyze:
-    def test_structure(self, h3270):
-        """scan_analyze returns dict with all expected keys."""
-        data = ascii_to_ebcdic("ENTER TRANSACTION CODE")
-        # Wrap in valid 3270 stream: EW + WCC
-        stream = bytes([0xF5, 0xC0]) + data
-        result = h3270.scan_analyze(stream, 'TEST', 42.5)
-        assert result['txn_code'] == 'TEST'
-        assert result['status'] == 'ACCESSIBLE'
-        assert isinstance(result['abends'], list)
-        assert isinstance(result['field_analysis'], dict)
-        assert isinstance(result['pf_keys'], list)
-        assert isinstance(result['esm'], dict)
-        assert result['duration_ms'] == 42.5
-        assert result['response_len'] == len(stream)
-
-
-class TestScanDB:
-    def test_write_read_scan_result(self, h3270):
-        """Write + read scan result round-trip."""
-        import json
-        report = {
-            'txn_code': 'CEMT',
-            'timestamp': 1234567890.0,
-            'status': 'ACCESSIBLE',
-            'abends': [],
-            'field_analysis': {'total': 2, 'input': 1, 'protected': 1, 'hidden': 0, 'numeric': 0, 'hidden_fields': []},
-            'pf_keys': ['PF3', 'PF7'],
-            'esm': {'esm': 'UNKNOWN', 'evidence': []},
-            'response_len': 100,
-            'duration_ms': 25.5,
-            'response_preview': 'CEMT INQUIRY',
-        }
-        row_id = h3270.write_scan_result(report)
-        assert row_id is not None
-        results = h3270.all_scan_results()
-        assert len(results) == 1
-        assert results[0][2] == 'CEMT'
-        assert results[0][3] == 'ACCESSIBLE'
-        assert results[0][7] == 'UNKNOWN'
-        # Verify JSON fields
-        stored_report = json.loads(results[0][11])
-        assert stored_report['txn_code'] == 'CEMT'
-
-
 # ---- SPOOL/RCE Detection ----
 
 class TestSpoolConstants:

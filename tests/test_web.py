@@ -84,7 +84,9 @@ def test_get_abends_empty(state):
     assert state.get_abends() == []
 
 def test_get_screen_map_empty(state):
-    assert state.get_screen_map() == []
+    result = state.get_screen_map()
+    assert result['fields'] == []
+    assert result['esm'] == 'UNKNOWN'
 
 def test_get_transactions_empty(state):
     assert state.get_transactions() == []
@@ -92,14 +94,6 @@ def test_get_transactions_empty(state):
 def test_get_transaction_stats_empty(state):
     stats = state.get_transaction_stats()
     assert stats['count'] == 0
-
-def test_get_audit_results_empty(state):
-    assert state.get_audit_results() == []
-
-def test_get_audit_summary_empty(state):
-    s = state.get_audit_summary()
-    assert s['ACCESSIBLE'] == 0
-    assert s['DENIED'] == 0
 
 def test_get_statistics(state):
     stats = state.get_statistics()
@@ -148,13 +142,6 @@ def test_export_csv(state):
     if os.path.exists(r['filename']):
         os.remove(r['filename'])
 
-def test_export_audit_csv(state):
-    r = state.export_audit_csv()
-    assert r['ok'] is True
-    if os.path.exists(r['filename']):
-        os.remove(r['filename'])
-
-
 # ---- Integration tests with HTTP server ----
 
 def test_http_root(web_server):
@@ -183,7 +170,9 @@ def test_http_api_abends(web_server):
 
 def test_http_api_screen_map(web_server):
     data = get(web_server, '/api/screen_map')
-    assert isinstance(data, list)
+    assert isinstance(data, dict)
+    assert 'fields' in data
+    assert 'esm' in data
 
 def test_http_api_transactions(web_server):
     data = get(web_server, '/api/transactions')
@@ -192,14 +181,6 @@ def test_http_api_transactions(web_server):
 def test_http_api_transaction_stats(web_server):
     data = get(web_server, '/api/transaction_stats')
     assert 'count' in data
-
-def test_http_api_audit_results(web_server):
-    data = get(web_server, '/api/audit_results')
-    assert isinstance(data, list)
-
-def test_http_api_audit_summary(web_server):
-    data = get(web_server, '/api/audit_summary')
-    assert 'ACCESSIBLE' in data
 
 def test_http_api_statistics(web_server):
     data = get(web_server, '/api/statistics')
@@ -267,48 +248,6 @@ def test_kill_port_owner_no_crash(h3270):
 def test_find_pid_for_inode_not_found():
     """_find_pid_for_inode returns None for a bogus inode."""
     assert Gr0gu3270WebUI._find_pid_for_inode('9999999999') is None
-
-
-# ---- Single Transaction Scan tests ----
-
-def test_get_scan_status_idle(state):
-    s = state.get_scan_status()
-    assert s['running'] is False
-    assert s['result'] is None
-
-def test_get_scan_results_empty(state):
-    assert state.get_scan_results() == []
-
-def test_scan_start_no_connection(state):
-    r = state.scan_txn({'txn_code': 'CEMT'})
-    assert r['ok'] is False
-    assert 'Not connected' in r['message']
-
-def test_scan_start_validation_empty(state):
-    r = state.scan_txn({'txn_code': ''})
-    assert r['ok'] is False
-    assert 'Invalid' in r['message']
-
-def test_scan_start_validation_too_long(state):
-    r = state.scan_txn({'txn_code': 'ABCDEFGHI'})
-    assert r['ok'] is False
-
-def test_scan_start_validation_bad_chars(state):
-    r = state.scan_txn({'txn_code': 'CE MT'})
-    assert r['ok'] is False
-
-def test_http_api_scan_status(web_server):
-    data = get(web_server, '/api/scan/status')
-    assert 'running' in data
-    assert data['running'] is False
-
-def test_http_api_scan_results(web_server):
-    data = get(web_server, '/api/scan/results')
-    assert isinstance(data, list)
-
-def test_http_scan_start_no_connection(web_server):
-    data = post_json(web_server, '/api/scan/start', {'txn_code': 'CEMT'})
-    assert data['ok'] is False
 
 
 # ---- NonBlockingClientSocket tests ----

@@ -37,7 +37,7 @@ python3 Gr0gu3270.py -t 10.10.10.10 3270                # TLS
 python3 Gr0gu3270.py --web-port 1337 10.10.10.10 3270   # web port custom
 python3 Gr0gu3270.py -o                                 # offline (analyse depuis DB)
 python3 Gr0gu3270.py --macro dvca-login.json 10.10.10.10 3270  # auto-run macro on connect
-python3 -m pytest tests/ -v                            # tests unitaires (167 tests)
+python3 -m pytest tests/ -v                            # tests unitaires (151 tests)
 ```
 
 Python 3.11+. Zero dependance externe.
@@ -45,8 +45,8 @@ Python 3.11+. Zero dependance externe.
 ### Architecture
 
 - `Gr0gu3270.py` — CLI entry point (74 lignes)
-- `libGr0gu3270.py` — Core library (~2700 lignes) : protocole 3270, EBCDIC, injection, ABEND detection, screen map, transactions, security audit, AID scan, SPOOL/RCE, macro engine, Findings, SQLite
-- `web.py` — Web UI (~2960 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 40 endpoints API, Findings panel
+- `libGr0gu3270.py` — Core library (~2550 lignes) : protocole 3270, EBCDIC, injection, ABEND detection, screen map, transactions, security classification, AID scan, SPOOL/RCE, macro engine, Findings, SQLite
+- `web.py` — Web UI (~2660 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 31 endpoints API, Findings panel, 8 accordion tabs
 
 ### Data Flow
 
@@ -67,8 +67,8 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 - Field attributes : bit 4 (hidden), bit 5 (numeric), bit 6 (protected).
 - Screen map : `parse_screen_map()` — walk SBA/SF/SFE/MF orders.
 - Transaction correlation : `detect_transaction_code()` — extract txn from client data.
-- Security audit : `build_clear_payload()` / `build_txn_payload()` (pure) + `audit_next()` (I/O).
-- AID scan : `extract_replay_path()` / `aid_scan_next()` / `screen_similarity()` — test 28 touches avec auto-replay.
+- Security classification : `classify_response()` / `fingerprint_esm()` / `build_clear_payload()` / `build_txn_payload()` (pure).
+- AID scan : `extract_replay_path()` / `aid_scan_next()` / `screen_similarity()` — test 24 touches avec auto-replay.
 - Field fuzz : `build_multi_field_payload()` (pure) + `_select_wordlists()` (auto-select by field type) + `fuzz_go()` / `_fuzz_worker()` (web.py I/O) — single-field, double-click popup UI.
 - SPOOL/RCE : `spool_check()` / `spool_poc_ftp()` — detection passive + PoC actif via INTRDR.
 - Macro engine : `parse_macro()` / `validate_macro_step()` / `build_macro_step_payload()` (pure) + `macro_run()` / `_macro_worker()` / `_macro_wait()` (web.py I/O).
@@ -86,7 +86,7 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 
 - `injections/` — 4 wordlists fuzzing (boundary-values, cobol-overflow, db2-injections, hidden-tampering) — auto-selected by field type
 - `macros/` — Macro JSON files for automated navigation (dvca-login.json)
-- `tests/` — 167 tests unitaires pytest (test_core.py + test_web.py)
+- `tests/` — 151 tests unitaires pytest (test_core.py + test_web.py)
 - `research/` — Journal, findings, knowledge base, post-mortems
 - `framework/` — Template CLAUDE.md + script init-research.sh
 - `docs/` — Documentation humaine (STAKEHOLDERS.md)

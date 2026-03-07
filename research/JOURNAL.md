@@ -121,3 +121,5 @@ Categories :
 2026-03-07 : [TOOL] Fuzzer overhaul — double-clic sur champ ouvre popup non-modale avec progress + resultats live. Auto-selection wordlists par type de champ (numeric/hidden/alpha). Wordlists de 21 fichiers (2M+ lignes) a 4 fichiers (122 lignes) — supprime enum (ceci, txn-prefixes, cics-default) + redondants (alpha-*, numeric-*, alphanumeric-*). db2-injections.txt reecrit de 1449 a 30 payloads cibles (7 techniques). Findings enrichis avec source wordlist et localisation champ. NAVIGATED emis en finding MEDIUM.
 
 2026-03-07 : [REF] Cree research/REF-DB2-INJECTION.md — reference injection DB2 z/OS pour pentesters. Differences DB2 vs web (SYSIBM, pas de SLEEP, EBCDIC), 7 techniques (detection, tautologie, UNION, catalog, blind, ORDER BY, fingerprint), observations ecran (ABENDs ASRA/ADTC/AEI0, SQLCODEs, blind via diff ecran).
+
+2026-03-07 : [ARCHI] Phase 2+3 complete — suppression Bulk Audit + Single Scan (backend+frontend, ~530 lignes), accordion 8 onglets (HACKS/SCREEN/SYSTEM/DATA), ESM fingerprint dans header Screen Map, ABEND Ref puces vertes, Method/Help dans modal `?`. 151 tests, 31 endpoints, ~5280 LOC total.
