@@ -497,6 +497,19 @@ class Gr0gu3270State:
                         'diff': diff,
                         'recovered': False,
                     })
+                    # Emit finding for interesting fuzz results
+                    if classification == 'ABEND':
+                        with self.lock:
+                            self.h.emit_finding('HIGH', 'FUZZER',
+                                                'Payload "{}" caused ABEND {}'.format(line[:60], abend_code or '?'),
+                                                txn_code=txn_code,
+                                                dedup_key='FUZZER:ABEND:{}:{}'.format(abend_code or '?', line[:60]))
+                    elif classification == 'DENIED':
+                        with self.lock:
+                            self.h.emit_finding('MEDIUM', 'FUZZER',
+                                                'Payload "{}" denied by ESM'.format(line[:60]),
+                                                txn_code=txn_code,
+                                                dedup_key='FUZZER:DENIED:{}'.format(line[:60]))
                 else:
                     self.fuzz_results.append({
                         'payload': line,
@@ -597,6 +610,24 @@ class Gr0gu3270State:
             'running': self.inject_running,
             'progress': getattr(self, 'fuzz_progress', {}),
         }
+
+    # ---- Findings ----
+
+    def get_findings(self, since=0, txn_code=None):
+        with self.lock:
+            rows = self.h.all_findings(since, txn_code)
+            return [{'id': r[0], 'timestamp': r[1],
+                     'timestamp_fmt': str(datetime.datetime.fromtimestamp(float(r[1]))),
+                     'severity': r[2], 'source': r[3],
+                     'txn_code': r[4], 'message': r[5]} for r in rows]
+
+    def get_findings_summary(self):
+        with self.lock:
+            self.h.sql_cur.execute("SELECT SEVERITY, COUNT(*) FROM Findings GROUP BY SEVERITY")
+            counts = {r[0]: r[1] for r in self.h.sql_cur.fetchall()}
+            return {'CRIT': counts.get('CRIT', 0), 'HIGH': counts.get('HIGH', 0),
+                    'MEDIUM': counts.get('MEDIUM', 0), 'INFO': counts.get('INFO', 0),
+                    'total': sum(counts.values())}
 
     # ---- Macro Engine ----
 
@@ -1123,6 +1154,12 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(self.state.get_macro_list())
         elif path == '/api/macro/status':
             self._send_json(self.state.get_macro_status())
+        elif path == '/api/findings':
+            since = int(params.get('since', ['0'])[0])
+            txn = params.get('txn', [None])[0]
+            self._send_json(self.state.get_findings(since, txn))
+        elif path == '/api/findings/summary':
+            self._send_json(self.state.get_findings_summary())
         else:
             self._send_json({'error': 'not found'}, 404)
 
@@ -1348,8 +1385,8 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 /* Collapsible panels */
 .panel-screen { max-height: 25vh; flex-shrink: 0; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; transition: max-height 0.2s; }
 .panel-screen.collapsed { max-height: 26px; }
-.panel-events { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.panel-events.collapsed { flex: 0; max-height: 26px; overflow: hidden; }
+.panel-findings { flex-shrink:0; max-height:140px; border-bottom:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+.panel-findings .panel-body { overflow-y:auto; flex:1; min-height:0; }
 .panel-header { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: var(--head); color: var(--bg); cursor: pointer; flex-shrink: 0; font-weight: bold; font-size: 18px; text-transform: uppercase; letter-spacing: 0.5px; text-shadow: none; }
 .panel-header:hover { opacity: 0.9; }
 .panel-title { color: var(--bg); font-size: 18px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -1357,18 +1394,18 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 .badge.zero { background: var(--border); color: var(--dim); }
 .panel-body { flex: 1; overflow-y: auto; min-height: 0; }
 
-/* Event row colors */
-.ev-abnd { background: rgba(255,21,31,0.06); }
-.ev-txn { background: transparent; }
-.ev-deny { background: rgba(255,21,31,0.1); }
-.ev-type { display: inline-block; font-size: 14px; font-weight: bold; padding: 1px 5px; letter-spacing: 0.5px; }
-.ev-type-abnd { background: var(--alert); color: var(--bg); }
-.ev-type-txn { background: var(--border); color: var(--text); }
-.ev-type-deny { background: var(--alert); color: var(--bg); }
-
-/* Event counters in header */
-.event-counters { display: flex; gap: 10px; margin-left: auto; font-size: 15px; color: var(--bg); }
-.event-counters span { display: flex; align-items: center; gap: 3px; }
+/* Findings severity badges */
+.fcnt { font-size:13px; font-weight:bold; padding:1px 6px; min-width:16px; text-align:center; }
+.fcnt-crit { background:#ff1521; color:#fff; }
+.fcnt-high { background:#ff8c00; color:#000; }
+.fcnt-med { background:#ffd700; color:#000; }
+.fcnt-info { background:var(--border); color:var(--dim); }
+.sev-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+.sev-crit { background:#ff1521; }
+.sev-high { background:#ff8c00; }
+.sev-med { background:#ffd700; }
+.sev-info { background:var(--dim); }
+.finding-src { font-size:11px; font-weight:bold; padding:1px 4px; background:var(--border); color:var(--text); }
 
 /* Accordion tool bar */
 /* Toolbar (top groups) */
@@ -1601,26 +1638,23 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
     </div>
   </div>
 
-  <!-- Events (flex:1, collapsible) -->
-  <div class="panel-events" id="panel-events">
-    <div class="panel-header" onclick="togglePanel('panel-events')">
-      <span class="panel-title">Events</span>
-      <span class="badge zero" id="badge-events">0</span>
-      <div class="event-counters">
-        <span><span class="ev-type ev-type-abnd">ABND</span> <b id="cnt-abnd">0</b></span>
-        <span><span class="ev-type ev-type-txn">TXN</span> <b id="cnt-txn">0</b></span>
-        <span><span class="ev-type ev-type-deny">DENY</span> <b id="cnt-deny">0</b></span>
+  <!-- Findings (always visible, top) -->
+  <div class="panel-findings" id="panel-findings">
+    <div class="panel-header">
+      <span class="panel-title">Findings</span>
+      <span class="fcnt fcnt-crit" id="cnt-crit">0</span>
+      <span class="fcnt fcnt-high" id="cnt-high">0</span>
+      <span class="fcnt fcnt-med" id="cnt-med">0</span>
+      <span class="fcnt fcnt-info" id="cnt-info">0</span>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:4px">
+        <span id="finding-txn-label" style="color:var(--bg);font-size:13px">ALL</span>
+        <button class="btn" id="finding-filter-btn" onclick="toggleFindingFilter()" style="font-size:12px;padding:1px 6px">ALL</button>
       </div>
     </div>
     <div class="panel-body">
       <table><thead><tr>
-        <th onclick="sortTable('events-table',0,'num')">ID</th>
-        <th onclick="sortTable('events-table',1,'str')">Time</th>
-        <th>Type</th>
-        <th>Code</th>
-        <th>Detail</th>
-        <th>ms</th>
-      </tr></thead><tbody id="events-table"></tbody></table>
+        <th style="width:16px"></th><th>Source</th><th>TXN</th><th>Finding</th><th>Time</th>
+      </tr></thead><tbody id="findings-table"></tbody></table>
     </div>
   </div>
 </div>
@@ -1638,7 +1672,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 <div class="oia-bar">
   <span class="oia-conn" id="oia-conn">DISCONNECTED</span>
   <span id="oia-target"></span>
-  <span>A:<b id="oia-abnd">0</b> T:<b id="oia-txn">0</b> D:<b id="oia-deny">0</b></span>
+  <span>F:<b id="oia-findings">0</b> C:<b id="oia-crit">0</b> H:<b id="oia-high">0</b></span>
   <span class="oia-right" id="oia-version"></span>
 </div>
 </div><!-- /container -->
@@ -1675,76 +1709,65 @@ let pollers = {};
 let disabledTabs = [];
 let logSince = 0, abendSince = 0, txnSince = 0, auditSince = 0;
 
-// ---- Events data layer ----
+// ---- Findings data layer ----
 let rawAbends = [];
 let rawTxns = [];
-let eventsList = [];
+let findingSince = 0;
+let findingsData = [];
+let findingFilterTxn = null; // null = ALL
 
-function rebuildEvents() {
-  eventsList = [];
-  rawAbends.forEach(r => {
-    const isDeny = (r.code === 'AEY7' || r.code === 'AEYF' || r.code === 'AEZD');
-    eventsList.push({
-      id: 'A' + r.id,
-      sortKey: r.id * 1000,
-      time: r.timestamp_fmt,
-      type: isDeny ? 'DENY' : 'ABND',
-      code: r.code,
-      detail: r.description || r.type,
-      ms: '',
-      raw: r
-    });
-  });
-  rawTxns.forEach(r => {
-    const isDeny = r.status && r.status.toLowerCase() === 'denied';
-    eventsList.push({
-      id: 'T' + r.id,
-      sortKey: r.id * 1000 + 1,
-      time: r.timestamp_fmt,
-      type: isDeny ? 'DENY' : 'TXN',
-      code: r.txn_code,
-      detail: r.status || '',
-      ms: r.duration_ms || '',
-      raw: r
-    });
-  });
-  eventsList.sort((a, b) => b.sortKey - a.sortKey);
-  renderEvents();
-  updateEventCounters();
+async function loadFindings() {
+  let url = '/api/findings?since=' + findingSince;
+  if (findingFilterTxn) url += '&txn=' + encodeURIComponent(findingFilterTxn);
+  try {
+    const data = await api(url);
+    if (data.length === 0) return;
+    data.forEach(r => { findingSince = Math.max(findingSince, r.id); findingsData.push(r); });
+    renderFindings();
+    loadFindingsSummary();
+  } catch(e) {}
 }
 
-function renderEvents() {
-  const tbody = document.getElementById('events-table');
+function renderFindings() {
+  const tbody = document.getElementById('findings-table');
   if (!tbody) return;
   tbody.innerHTML = '';
-  eventsList.forEach(ev => {
+  [...findingsData].reverse().forEach(f => {
     const tr = document.createElement('tr');
-    const typeClass = ev.type === 'ABND' ? 'ev-abnd' : ev.type === 'DENY' ? 'ev-deny' : 'ev-txn';
-    const badgeClass = ev.type === 'ABND' ? 'ev-type-abnd' : ev.type === 'DENY' ? 'ev-type-deny' : 'ev-type-txn';
-    tr.className = typeClass;
-    tr.innerHTML = '<td>'+esc(ev.id)+'</td><td>'+esc(ev.time)+'</td><td><span class="ev-type '+badgeClass+'">'+ev.type+'</span></td><td>'+esc(ev.code)+'</td><td>'+esc(ev.detail)+'</td><td>'+esc(String(ev.ms))+'</td>';
+    const s = f.severity.toLowerCase();
+    tr.innerHTML = '<td><span class="sev-dot sev-'+s+'"></span></td>'
+      +'<td><span class="finding-src">'+esc(f.source)+'</span></td>'
+      +'<td>'+esc(f.txn_code||'')+'</td>'
+      +'<td>'+esc(f.message)+'</td>'
+      +'<td>'+esc((f.timestamp_fmt||'').split(' ')[1]||'')+'</td>';
     tbody.appendChild(tr);
   });
 }
 
-function updateEventCounters() {
-  let abnd = 0, txn = 0, deny = 0;
-  eventsList.forEach(ev => {
-    if (ev.type === 'ABND') abnd++;
-    else if (ev.type === 'DENY') deny++;
-    else txn++;
-  });
-  document.getElementById('cnt-abnd').textContent = abnd;
-  document.getElementById('cnt-txn').textContent = txn;
-  document.getElementById('cnt-deny').textContent = deny;
-  // OIA bar counters
-  const oa = document.getElementById('oia-abnd'); if (oa) oa.textContent = abnd;
-  const ot = document.getElementById('oia-txn'); if (ot) ot.textContent = txn;
-  const od = document.getElementById('oia-deny'); if (od) od.textContent = deny;
-  const total = eventsList.length;
-  const el = document.getElementById('badge-events');
-  el.textContent = total > 99 ? '99+' : total;
-  el.className = total > 0 ? 'badge' : 'badge zero';
+async function loadFindingsSummary() {
+  try {
+    const s = await api('/api/findings/summary');
+    document.getElementById('cnt-crit').textContent = s.CRIT||0;
+    document.getElementById('cnt-high').textContent = s.HIGH||0;
+    document.getElementById('cnt-med').textContent = s.MEDIUM||0;
+    document.getElementById('cnt-info').textContent = s.INFO||0;
+    // OIA bar
+    const of = document.getElementById('oia-findings'); if (of) of.textContent = s.total||0;
+    const oc = document.getElementById('oia-crit'); if (oc) oc.textContent = s.CRIT||0;
+    const oh = document.getElementById('oia-high'); if (oh) oh.textContent = s.HIGH||0;
+  } catch(e) {}
+}
+
+function toggleFindingFilter() {
+  if (findingFilterTxn) {
+    findingFilterTxn = null;
+  } else if (rawTxns.length > 0) {
+    findingFilterTxn = rawTxns[rawTxns.length-1].txn_code;
+  }
+  document.getElementById('finding-filter-btn').textContent = findingFilterTxn || 'ALL';
+  document.getElementById('finding-txn-label').textContent = findingFilterTxn || 'ALL';
+  findingSince = 0; findingsData = [];
+  loadFindings();
 }
 
 // ---- Toast ----
@@ -2086,11 +2109,12 @@ function buildActionPanels() {
 
 // ---- Always-on pollers for dashboard panels ----
 function startDashboardPollers() {
-  pollers.abends = setInterval(loadAbends, 2000);
+  pollers.findings = setInterval(loadFindings, 2000);
   pollers.txns = setInterval(loadTransactions, 2000);
+  pollers.abends = setInterval(loadAbends, 5000);
   pollers.screenMap = setInterval(loadScreenMap, 5000);
   // Initial loads
-  loadAbends(); loadTransactions(); loadScreenMap();
+  loadFindings(); loadTransactions(); loadAbends(); loadScreenMap();
 }
 
 // ---- Splash screen ----
@@ -2184,7 +2208,6 @@ async function loadAbends() {
       abendSince = Math.max(abendSince, r.id);
       rawAbends.push(r);
     });
-    rebuildEvents();
   } catch(e) {}
 }
 
@@ -2352,7 +2375,17 @@ async function loadTransactions() {
       txnSince = Math.max(txnSince, r.id);
       rawTxns.push(r);
     });
-    rebuildEvents();
+    // Auto-follow: update finding filter to latest transaction
+    if (findingFilterTxn && rawTxns.length > 0) {
+      const latest = rawTxns[rawTxns.length-1].txn_code;
+      if (latest !== findingFilterTxn) {
+        findingFilterTxn = latest;
+        document.getElementById('finding-filter-btn').textContent = latest;
+        document.getElementById('finding-txn-label').textContent = latest;
+        findingSince = 0; findingsData = [];
+        loadFindings();
+      }
+    }
   } catch(e) {}
 }
 

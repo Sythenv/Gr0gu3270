@@ -829,3 +829,27 @@ def test_http_aid_scan_stop(web_server):
     resp = urllib.request.urlopen(req, timeout=5)
     data = json.loads(resp.read())
     assert data['ok'] is True
+
+
+# ---- Findings ----
+
+def test_get_findings_empty(state):
+    """get_findings returns empty list when no findings."""
+    assert state.get_findings() == []
+
+
+def test_get_findings_summary_empty(state):
+    """get_findings_summary returns all zeros when no findings."""
+    s = state.get_findings_summary()
+    assert s['CRIT'] == 0
+    assert s['HIGH'] == 0
+    assert s['MEDIUM'] == 0
+    assert s['INFO'] == 0
+    assert s['total'] == 0
+
+
+def test_http_api_findings(web_server):
+    """GET /api/findings returns a list."""
+    data = get(web_server, '/api/findings')
+    assert isinstance(data, list)
+    assert len(data) == 0

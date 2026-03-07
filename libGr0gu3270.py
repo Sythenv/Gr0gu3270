@@ -49,6 +49,14 @@ ABEND_CODES = {
     'AQRD': 'Queue read error',
 }
 
+# ABEND severity mapping for Findings
+ABEND_SEVERITY = {
+    'ASRA': 'CRIT', 'ASRB': 'CRIT', 'AICA': 'HIGH',
+    'AEY7': 'HIGH', 'AEYF': 'HIGH', 'AEZD': 'HIGH',
+    'AEYD': 'INFO', 'APCT': 'INFO',
+}
+# Default for unlisted codes: MEDIUM
+
 # CICS error message prefixes (DFHxxxx)
 CICS_ERROR_PREFIXES = [
     'DFH', 'DFHAC', 'DFHAM', 'DFHAP', 'DFHBM', 'DFHDB', 'DFHDC',
@@ -512,6 +520,22 @@ class Gr0gu3270:
                             """)
             self.sql_con.commit()
 
+        # Findings table
+        self.sql_cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Findings'")
+        if not self.sql_cur.fetchone():
+            self.logger.debug("Creating Findings table...")
+            self.sql_cur.execute("""
+                            CREATE TABLE Findings (
+                            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                            TIMESTAMP TEXT,
+                            SEVERITY TEXT,
+                            SOURCE TEXT,
+                            TXN_CODE TEXT,
+                            MESSAGE TEXT,
+                            DEDUP_KEY TEXT UNIQUE)
+                            """)
+            self.sql_con.commit()
+
     def write_database_log(self, direction, notes, data):
 
         if data[0] == 255:
@@ -895,6 +919,29 @@ class Gr0gu3270:
             self.sql_cur.execute("SELECT * FROM Abends")
         return self.sql_cur.fetchall()
 
+    # ---- Findings ----
+
+    def emit_finding(self, severity, source, message, txn_code=None, dedup_key=None):
+        '''Emit a security finding with deduplication.'''
+        if dedup_key is None:
+            dedup_key = '{}:{}'.format(source, message[:100])
+        try:
+            self.sql_cur.execute(
+                "INSERT OR IGNORE INTO Findings (TIMESTAMP, SEVERITY, SOURCE, TXN_CODE, MESSAGE, DEDUP_KEY) VALUES (?, ?, ?, ?, ?, ?)",
+                (str(time.time()), severity, source, txn_code, message, dedup_key))
+            self.sql_con.commit()
+            return self.sql_cur.rowcount > 0
+        except Exception:
+            return False
+
+    def all_findings(self, start=0, txn_code=None):
+        '''Gets findings from database, optionally filtered by txn_code.'''
+        if txn_code:
+            self.sql_cur.execute("SELECT * FROM Findings WHERE ID > ? AND TXN_CODE = ? ORDER BY ID", (start, txn_code))
+        else:
+            self.sql_cur.execute("SELECT * FROM Findings WHERE ID > ? ORDER BY ID", (start,))
+        return self.sql_cur.fetchall()
+
     # ---- PR2: Screen Map Parsing Methods ----
 
     def decode_buffer_address(self, b1, b2):
@@ -1089,6 +1136,15 @@ class Gr0gu3270:
                     f['label'] = prev['content'].strip()
 
         self.current_screen_map = fields
+
+        # Emit findings for hidden fields
+        for f in fields:
+            if f.get('hidden'):
+                txn = self.pending_transaction['code'] if self.pending_transaction else None
+                self.emit_finding('MEDIUM', 'SCREEN_MAP',
+                                  'Hidden field at row {} col {} (len={})'.format(f['row'], f['col'], f.get('length', 0)),
+                                  txn_code=txn, dedup_key='SCREEN_MAP:hidden:{}:{}'.format(f['row'], f['col']))
+
         return fields
 
     def get_screen_map(self):
@@ -1598,6 +1654,15 @@ class Gr0gu3270:
         self.write_aid_scan_log(result)
         self.aid_scan_index += 1
 
+        # Emit finding for interesting AID scan results
+        cat = result['category']
+        if cat == 'VIOLATION':
+            self.emit_finding('HIGH', 'AID_SCAN', '{} triggered security violation'.format(aid_name),
+                              dedup_key='AID_SCAN:VIOLATION:{}'.format(aid_name))
+        elif cat == 'NEW_SCREEN':
+            self.emit_finding('INFO', 'AID_SCAN', '{} navigated to new screen'.format(aid_name),
+                              dedup_key='AID_SCAN:NEW_SCREEN:{}'.format(aid_name))
+
         self.logger.debug("AID scan: {} -> {} (replay: {})".format(
             aid_name, result['category'], 'OK' if replay_ok else 'FAIL'))
 
@@ -1724,6 +1789,8 @@ class Gr0gu3270:
             self._spool_send_and_read(close_cmd, is_tn3270e)
             result['status'] = 'SPOOL_OPEN'
             result['detail'] = 'SPOOLOPEN returned NORMAL — SPOOL API accessible. RCE via INTRDR is possible.'
+            self.emit_finding('CRIT', 'SPOOL', 'SPOOL API accessible — RCE via INTRDR possible',
+                              dedup_key='SPOOL:OPEN')
         else:
             result['status'] = 'SPOOL_CLOSED'
             fail_reason = 'Unknown'
@@ -1877,6 +1944,13 @@ class Gr0gu3270:
 
         self.audit_results.append(result)
         self.write_audit_log(result)
+
+        # Emit finding for DENIED responses
+        if status == 'DENIED':
+            self.emit_finding('HIGH', 'SECURITY', 'Transaction {} denied by ESM'.format(self.audit_current_txn),
+                              txn_code=self.audit_current_txn,
+                              dedup_key='SECURITY:DENIED:{}'.format(self.audit_current_txn))
+
         self.audit_current_txn = None
 
         return result
@@ -2177,6 +2251,11 @@ class Gr0gu3270:
                     self.sql_cur.execute("SELECT MAX(ID) FROM Logs")
                     log_id = self.sql_cur.fetchone()[0]
                     self.write_abend_log(abend, log_id)
+                    # Emit finding
+                    txn = self.pending_transaction['code'] if self.pending_transaction else None
+                    sev = ABEND_SEVERITY.get(abend['code'], 'MEDIUM')
+                    self.emit_finding(sev, 'ABEND', '{}: {}'.format(abend['code'], abend['description']),
+                                      txn_code=txn, dedup_key='ABEND:{}:{}'.format(abend['code'], txn or ''))
                     # Annotate the log notes
                     self.sql_cur.execute(
                         "UPDATE Logs SET NOTES = NOTES || ? WHERE ID = ?",

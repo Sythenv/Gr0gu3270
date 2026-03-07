@@ -785,3 +785,70 @@ class TestAbendRegexFallback:
         detections = h3270.detect_abend(data)
         asra_count = sum(1 for d in detections if d['code'] == 'ASRA')
         assert asra_count == 1
+
+
+# ---- Findings ----
+
+class TestFindings:
+    def test_findings_table_exists(self, h3270):
+        """Findings table is created at init."""
+        h3270.sql_cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Findings'")
+        assert h3270.sql_cur.fetchone() is not None
+
+    def test_emit_finding_basic(self, h3270):
+        """emit_finding inserts and retrieves a finding."""
+        result = h3270.emit_finding('HIGH', 'ABEND', 'ASRA detected', txn_code='CECI')
+        assert result is True
+        rows = h3270.all_findings()
+        assert len(rows) == 1
+        assert rows[0][2] == 'HIGH'
+        assert rows[0][3] == 'ABEND'
+        assert rows[0][4] == 'CECI'
+        assert rows[0][5] == 'ASRA detected'
+
+    def test_emit_finding_dedup(self, h3270):
+        """Same dedup_key inserts only one row."""
+        h3270.emit_finding('HIGH', 'ABEND', 'ASRA detected', dedup_key='ABEND:ASRA:CECI')
+        h3270.emit_finding('HIGH', 'ABEND', 'ASRA detected again', dedup_key='ABEND:ASRA:CECI')
+        rows = h3270.all_findings()
+        assert len(rows) == 1
+
+    def test_emit_finding_different_keys(self, h3270):
+        """Different dedup_keys create separate rows."""
+        h3270.emit_finding('HIGH', 'ABEND', 'ASRA', dedup_key='key1')
+        h3270.emit_finding('MEDIUM', 'FUZZER', 'denied', dedup_key='key2')
+        rows = h3270.all_findings()
+        assert len(rows) == 2
+
+    def test_emit_finding_with_txn(self, h3270):
+        """txn_code is properly stored."""
+        h3270.emit_finding('INFO', 'AID_SCAN', 'PF5 new screen', txn_code='MCMM')
+        rows = h3270.all_findings()
+        assert rows[0][4] == 'MCMM'
+
+    def test_all_findings_since(self, h3270):
+        """Incremental retrieval via start parameter."""
+        h3270.emit_finding('HIGH', 'ABEND', 'first', dedup_key='k1')
+        h3270.emit_finding('MEDIUM', 'FUZZER', 'second', dedup_key='k2')
+        rows = h3270.all_findings()
+        first_id = rows[0][0]
+        rows_since = h3270.all_findings(start=first_id)
+        assert len(rows_since) == 1
+        assert rows_since[0][5] == 'second'
+
+    def test_all_findings_txn_filter(self, h3270):
+        """Filtering by transaction code."""
+        h3270.emit_finding('HIGH', 'ABEND', 'on CECI', txn_code='CECI', dedup_key='k1')
+        h3270.emit_finding('MEDIUM', 'FUZZER', 'on MCMM', txn_code='MCMM', dedup_key='k2')
+        h3270.emit_finding('INFO', 'AID_SCAN', 'no txn', dedup_key='k3')
+        rows = h3270.all_findings(txn_code='CECI')
+        assert len(rows) == 1
+        assert rows[0][5] == 'on CECI'
+
+    def test_abend_severity_mapping(self, h3270):
+        """ABEND_SEVERITY maps known codes correctly."""
+        from libGr0gu3270 import ABEND_SEVERITY
+        assert ABEND_SEVERITY.get('ASRA') == 'CRIT'
+        assert ABEND_SEVERITY.get('AEY7') == 'HIGH'
+        assert ABEND_SEVERITY.get('APCT') == 'INFO'
+        assert ABEND_SEVERITY.get('XXXX', 'MEDIUM') == 'MEDIUM'
