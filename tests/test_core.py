@@ -772,11 +772,11 @@ class TestListInjectionFiles:
 
 class TestAbendRegexFallback:
     def test_detect_abend_regex_fallback(self, h3270):
-        """Unknown ABEND code AEI9 detected via regex fallback."""
-        data = ascii_to_ebcdic("Abend Code AEI9")
+        """Unknown ABEND code AZZZ detected via regex fallback."""
+        data = ascii_to_ebcdic("Abend Code AZZZ")
         detections = h3270.detect_abend(data)
         codes = [d['code'] for d in detections]
-        assert 'AEI9' in codes
+        assert 'AZZZ' in codes
         assert any(d['description'] == 'Unknown ABEND (not in catalog)' for d in detections)
 
     def test_detect_abend_regex_no_duplicate(self, h3270):

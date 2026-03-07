@@ -47,6 +47,19 @@ ABEND_CODES = {
     'AEIP': 'EXEC CICS command error',
     'AEZD': 'CICS security violation',
     'AQRD': 'Queue read error',
+    'AEI0': 'EXEC CICS interface error (injection vector)',
+    'AEI9': 'Invalid data format (type confusion)',
+    'AKCP': 'Temp storage full (DoS via queue flooding)',
+    'AFCF': 'File not open (race condition)',
+    'AFCB': 'Dataset busy (contention/DoS)',
+    'ASP2': 'Supervisor service error (kernel-level)',
+    'ATCV': 'Task control violation (privilege escalation)',
+    'AEXK': 'EXEC interface security check failure',
+    'AIIB': 'Invalid interval control (timer manipulation)',
+    'AWDQ': 'Deadlock wait (DoS)',
+    'AKEA': 'GETMAIN failure (memory exhaustion)',
+    'AEC3': 'Socket error (network-level)',
+    'AEDF': 'Program isolation violation',
 }
 
 # ABEND severity mapping for Findings
@@ -54,6 +67,16 @@ ABEND_SEVERITY = {
     'ASRA': 'CRIT', 'ASRB': 'CRIT', 'AICA': 'HIGH',
     'AEY7': 'HIGH', 'AEYF': 'HIGH', 'AEZD': 'HIGH',
     'AEYD': 'INFO', 'APCT': 'INFO',
+    # Extended codes
+    'AEI0': 'HIGH', 'AEI9': 'MEDIUM', 'AKCP': 'HIGH',
+    'AFCF': 'MEDIUM', 'AFCB': 'MEDIUM', 'ASP2': 'CRIT',
+    'ATCV': 'CRIT', 'AEXK': 'HIGH', 'AIIB': 'MEDIUM',
+    'AWDQ': 'HIGH', 'AKEA': 'HIGH', 'AEC3': 'MEDIUM', 'AEDF': 'HIGH',
+    # Existing codes previously unmapped
+    'AEY9': 'MEDIUM', 'AFCA': 'MEDIUM', 'AFCR': 'MEDIUM',
+    'AKCS': 'INFO', 'AKCT': 'INFO', 'ASP1': 'HIGH',
+    'ATNI': 'MEDIUM', 'AEXL': 'MEDIUM', 'ABMB': 'INFO',
+    'ADTC': 'MEDIUM', 'AEIP': 'MEDIUM', 'AQRD': 'MEDIUM',
 }
 # Default for unlisted codes: MEDIUM
 
