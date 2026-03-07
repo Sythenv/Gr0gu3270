@@ -1627,7 +1627,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
         </div>
         <div id="fuzz-results-wrap" style="display:none;margin-top:8px;max-height:200px;overflow-y:auto">
           <table style="width:100%"><thead><tr>
-            <th>Payload</th><th>Status</th><th>Sim%</th><th>Diff</th>
+            <th>Payload</th><th>Status</th><th>Diff</th>
           </tr></thead><tbody id="fuzz-results-table"></tbody></table>
           <div id="fuzz-summary" style="margin-top:4px;color:var(--dim);font-size:12px"></div>
         </div>
@@ -2064,7 +2064,7 @@ function buildActionPanels() {
       <span style="color:var(--dim)"><b id="as-skipped">0</b> SKIPPED</span>
     </div>
     <table style="margin-top:4px"><thead><tr>
-      <th style="text-align:center">R</th><th>Key</th><th>Category</th><th>Status</th><th>Similarity</th><th>Preview</th>
+      <th style="text-align:center">R</th><th>Key</th><th>Category</th>
     </tr></thead><tbody id="aid-scan-table"></tbody></table>`;
 
   // SPOOL/RCE
@@ -2353,13 +2353,12 @@ async function loadFuzzResults() {
     for (const r of d.results) {
       const tr = document.createElement('tr');
       const col = FUZZ_STATUS_COLORS[r.status] || 'var(--fg)';
-      const sim = r.similarity >= 0 ? Math.round(r.similarity * 100) : '-';
       const diffHtml = r.diff && r.diff.length > 0
         ? '<span class="fuzz-diff" title="'+r.diff.map(d=>'R'+d.row+': '+esc(d.got)).join('&#10;')+'">\u0394'+r.diff.length+'</span>'
         : '';
       const statusText = r.abend_code ? r.status+' ('+r.abend_code+')' : r.status;
       const recIcon = r.recovered ? ' <span title="Recovery needed" style="color:#4ec9b0">\u21bb</span>' : '';
-      tr.innerHTML = '<td>'+esc(r.payload)+'</td><td style="color:'+col+'">'+statusText+recIcon+'</td><td>'+sim+'</td><td>'+diffHtml+'</td>';
+      tr.innerHTML = '<td>'+esc(r.payload)+'</td><td style="color:'+col+'">'+statusText+recIcon+'</td><td>'+diffHtml+'</td>';
       tbody.appendChild(tr);
     }
     const parts = Object.entries(d.summary).map(([k,v]) => k+':'+v);
@@ -2557,14 +2556,11 @@ async function aidScanPoll() {
     const c = CAT_COLORS[row.category]||C.dim;
     const rdot = row.replay_ok===false ? 'var(--alert)' : 'var(--text)';
     const tr = document.createElement('tr');
+    const preview = (row.response_preview||'').replace(/"/g,'&quot;');
+    tr.setAttribute('title', preview);
     tr.innerHTML = '<td style="text-align:center"><span style="display:block;margin:auto;width:8px;height:8px;border-radius:50%;background:'+rdot+'"></span></td>'+
       '<td>'+row.aid_key+'</td>'+
-      '<td style="color:'+c+';font-weight:bold">'+row.category+'</td>'+
-      '<td>'+row.status+'</td>'+
-      '<td>'+(row.similarity*100).toFixed(0)+'%</td>'+
-      '<td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;color:var(--dim)" title="'+
-        (row.response_preview||'').replace(/"/g,'&quot;')+'">'+
-        (row.response_preview||'').substring(0,100)+'</td>';
+      '<td style="color:'+c+';font-weight:bold">'+row.category+'</td>';
     tb.appendChild(tr);
   });
   if (!r.running) {
