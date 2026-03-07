@@ -107,3 +107,13 @@ Categories :
 2026-03-05 21:30 : [EXP] Test live AID scan sur DVCA — 3 ecrans (CSGM, MCMM, MCOR). Le scan fonctionne mais le replay echoue apres PF3 (LOGOFF KICKS) car le userid TSO est verrouille. Finding F-0009 : les touches destructrices de session necessitent l'operateur.
 
 2026-03-05 22:00 : [EXP] POST-MORTEM — Boucle de debug x3270 inutile. ~32 appels outils gaspilles (~4.70€, ~15-20 min) a tenter de connecter x3270 GUI depuis WSL au lieu d'ecrire directement un client headless. Voir research/POSTMORTEM-CLAUDE-CODE.md pour l'analyse complete et les best practices utilisateur.
+
+## 2026-03-07
+
+2026-03-07 : [TOOL] Panneau Findings remplace Events. Table DB Findings (8e table, DEDUP_KEY UNIQUE). emit_finding() avec severite CRIT/HIGH/MEDIUM/INFO, 6 hooks d'emission (ABEND, hidden field, AID scan, SPOOL, fuzzer, security audit). UI always-visible, filtre par transaction (ALL/auto-follow), compteurs severite dans header + OIA bar. Supprime ~120 LOC Events (HTML/CSS/JS), ajoute ~235 LOC Findings. 11 nouveaux tests → 167 total.
+
+2026-03-07 : [ARCHI] Constante ABEND_SEVERITY mappe les codes connus vers CRIT (ASRA/ASRB), HIGH (AEY7/AEYF/AEZD/AICA), INFO (AEYD/APCT), default MEDIUM. Dedup par cle composite (source:code:contexte) — INSERT OR IGNORE evite les doublons sans logique applicative.
+
+2026-03-07 : [ARCHI] Lecon architecture : le monolithe web.py (2960 LOC, HTML+CSS+JS+Python dans un fichier) est un choix delibere, pas une dette. Zero dependance = un fichier a copier sur la machine cible. Les patterns d'architecture web classiques (separation concerns, build chain) ne s'appliquent pas a un outil de pentest autonome.
+
+2026-03-07 : [TOOL] Polish 80/20 — 3 wordlists (ceci-commands 25L, cobol-overflow 31L, custom-txn-prefixes 676 AA-ZZ), 13 ABEND codes supplementaires (33 total, severite 100% mappee), UI cleanup fuzzer (Sim% retire) et AID scan (Status/Similarity/Preview retires, preview en tooltip). 21 fichiers injections/, 167 tests OK.

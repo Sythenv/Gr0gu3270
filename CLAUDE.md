@@ -62,7 +62,7 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 
 - `e2a[]` : table EBCDIC→ASCII 256 elements. Conversion via `get_ascii()`.
 - `AIDS` dict : AID byte codes (ENTER=0x7D, CLEAR=0x6D, PF1-24, PA1-3).
-- `ABEND_CODES` : 20 codes CICS avec descriptions pentest.
+- `ABEND_CODES` : 33 codes CICS avec descriptions pentest.
 - `SECURITY_VIOLATION_PATTERNS` : 25 patterns RACF/ACF2/TSS.
 - Field attributes : bit 4 (hidden), bit 5 (numeric), bit 6 (protected).
 - Screen map : `parse_screen_map()` — walk SBA/SF/SFE/MF orders.
@@ -84,7 +84,7 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 
 ### Directories
 
-- `injections/` — 16 wordlists fuzzing (alpha, numeric, CICS transactions, DB2 injections)
+- `injections/` — 21 wordlists fuzzing (alpha, numeric, CICS transactions, DB2 injections, CECI, COBOL overflow, txn prefixes)
 - `macros/` — Macro JSON files for automated navigation (dvca-login.json)
 - `tests/` — 167 tests unitaires pytest (test_core.py + test_web.py)
 - `research/` — Journal, findings, knowledge base, post-mortems
