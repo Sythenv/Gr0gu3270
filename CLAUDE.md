@@ -69,7 +69,7 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 - Transaction correlation : `detect_transaction_code()` — extract txn from client data.
 - Security audit : `build_clear_payload()` / `build_txn_payload()` (pure) + `audit_next()` (I/O).
 - AID scan : `extract_replay_path()` / `aid_scan_next()` / `screen_similarity()` — test 28 touches avec auto-replay.
-- Field fuzz : `build_multi_field_payload()` (pure) + `fuzz_go()` / `_fuzz_worker()` (web.py I/O) — multi-field injection from screen map.
+- Field fuzz : `build_multi_field_payload()` (pure) + `_select_wordlists()` (auto-select by field type) + `fuzz_go()` / `_fuzz_worker()` (web.py I/O) — single-field, double-click popup UI.
 - SPOOL/RCE : `spool_check()` / `spool_poc_ftp()` — detection passive + PoC actif via INTRDR.
 - Macro engine : `parse_macro()` / `validate_macro_step()` / `build_macro_step_payload()` (pure) + `macro_run()` / `_macro_worker()` / `_macro_wait()` (web.py I/O).
 - Findings : `emit_finding()` / `all_findings()` — deduplicated security findings with severity, source, txn context.
@@ -84,7 +84,7 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 
 ### Directories
 
-- `injections/` — 21 wordlists fuzzing (alpha, numeric, CICS transactions, DB2 injections, CECI, COBOL overflow, txn prefixes)
+- `injections/` — 4 wordlists fuzzing (boundary-values, cobol-overflow, db2-injections, hidden-tampering) — auto-selected by field type
 - `macros/` — Macro JSON files for automated navigation (dvca-login.json)
 - `tests/` — 167 tests unitaires pytest (test_core.py + test_web.py)
 - `research/` — Journal, findings, knowledge base, post-mortems

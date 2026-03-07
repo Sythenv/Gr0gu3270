@@ -116,4 +116,8 @@ Categories :
 
 2026-03-07 : [ARCHI] Lecon architecture : le monolithe web.py (2960 LOC, HTML+CSS+JS+Python dans un fichier) est un choix delibere, pas une dette. Zero dependance = un fichier a copier sur la machine cible. Les patterns d'architecture web classiques (separation concerns, build chain) ne s'appliquent pas a un outil de pentest autonome.
 
-2026-03-07 : [TOOL] Polish 80/20 — 3 wordlists (ceci-commands 25L, cobol-overflow 31L, custom-txn-prefixes 676 AA-ZZ), 13 ABEND codes supplementaires (33 total, severite 100% mappee), UI cleanup fuzzer (Sim% retire) et AID scan (Status/Similarity/Preview retires, preview en tooltip). 21 fichiers injections/, 167 tests OK.
+2026-03-07 : [TOOL] Polish 80/20 — 13 ABEND codes supplementaires (33 total, severite 100% mappee), UI cleanup fuzzer (Sim% retire) et AID scan (Status/Similarity/Preview retires, preview en tooltip). 167 tests OK.
+
+2026-03-07 : [TOOL] Fuzzer overhaul — double-clic sur champ ouvre popup non-modale avec progress + resultats live. Auto-selection wordlists par type de champ (numeric/hidden/alpha). Wordlists de 21 fichiers (2M+ lignes) a 4 fichiers (122 lignes) — supprime enum (ceci, txn-prefixes, cics-default) + redondants (alpha-*, numeric-*, alphanumeric-*). db2-injections.txt reecrit de 1449 a 30 payloads cibles (7 techniques). Findings enrichis avec source wordlist et localisation champ. NAVIGATED emis en finding MEDIUM.
+
+2026-03-07 : [REF] Cree research/REF-DB2-INJECTION.md — reference injection DB2 z/OS pour pentesters. Differences DB2 vs web (SYSIBM, pas de SLEEP, EBCDIC), 7 techniques (detection, tautologie, UNION, catalog, blind, ORDER BY, fingerprint), observations ecran (ABENDs ASRA/ADTC/AEI0, SQLCODEs, blind via diff ecran).
