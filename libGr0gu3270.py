@@ -538,6 +538,12 @@ class Gr0gu3270:
                             REPLAY_OK INTEGER DEFAULT 1)
                             """)
             self.sql_con.commit()
+        else:
+            # Migrate: add REPLAY_OK if missing (pre-v1.2.5 DBs)
+            cols = [r[1] for r in self.sql_cur.execute("PRAGMA table_info(AidScan)").fetchall()]
+            if 'REPLAY_OK' not in cols:
+                self.sql_cur.execute("ALTER TABLE AidScan ADD COLUMN REPLAY_OK INTEGER DEFAULT 1")
+                self.sql_con.commit()
 
         # Findings table
         self.sql_cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Findings'")
@@ -1477,11 +1483,13 @@ class Gr0gu3270:
 
     # Keys with discovery potential only.
     # Excluded: PF3 (exit — known), PA1-3 (attention — rarely mapped).
+    # Order: safe (rarely mapped) → interesting (nav/business) → risky (help/submit)
     AID_SCAN_KEYS = [
-        'ENTER', 'PF1', 'PF2', 'PF4', 'PF5', 'PF6',
-        'PF7', 'PF8', 'PF9', 'PF10', 'PF11', 'PF12',
         'PF13', 'PF14', 'PF15', 'PF16', 'PF17', 'PF18',
         'PF19', 'PF20', 'PF21', 'PF22', 'PF23', 'PF24',
+        'PF9', 'PF10', 'PF11', 'PF12',
+        'PF7', 'PF8', 'PF4', 'PF5', 'PF6', 'PF2',
+        'PF1', 'ENTER',
     ]
 
     def build_aid_payload(self, aid_name, is_tn3270e):
@@ -1562,6 +1570,7 @@ class Gr0gu3270:
         self.aid_scan_index = 0
         self.aid_scan_results = []
         self.aid_scan_running = True
+        self.aid_scan_needs_recovery = False
         self.logger.debug("AID scan started, replay path has {} steps".format(
             len(self.aid_scan_replay_path)))
 
@@ -1594,15 +1603,16 @@ class Gr0gu3270:
 
         # Always start with a CLEAR to reset state
         clear_payload = self.build_clear_payload(is_tn3270e)
-        self._aid_scan_send_and_read(clear_payload, timeout=0.5)
+        self._aid_scan_send_and_read(clear_payload, timeout=2)
+        time.sleep(0.3)
 
         for step in self.aid_scan_replay_path:
             # Skip the CLEAR that's already in the path (we just sent one)
             step_aid_offset = 5 if (len(step) > 5 and step[0] == 0x00) else 0
             if step_aid_offset < len(step) and step[step_aid_offset] == 0x6D:
                 continue
-            last_response = self._aid_scan_send_and_read(step, timeout=1)
-            time.sleep(0.1)
+            last_response = self._aid_scan_send_and_read(step, timeout=2)
+            time.sleep(0.3)
 
         return last_response
 
@@ -1615,6 +1625,24 @@ class Gr0gu3270:
 
         aid_name = self.aid_scan_keys[self.aid_scan_index]
         is_tn3270e = self.check_inject_3270e()
+
+        # If previous key left us on a wrong screen, try to recover first
+        if self.aid_scan_needs_recovery:
+            self.logger.debug("AID scan: pre-recovery before {}...".format(aid_name))
+            recovered = self._aid_scan_try_replay(aid_name)
+            if not recovered:
+                # Can't get back — skip this key and try next
+                self.logger.debug("AID scan: pre-recovery failed, skipping {}".format(aid_name))
+                result = {
+                    'aid_key': aid_name, 'category': 'SKIPPED', 'status': 'SKIPPED',
+                    'similarity': 0.0, 'response_preview': 'Skipped — recovery failed',
+                    'response_len': 0, 'timestamp': time.time(), 'replay_ok': False,
+                }
+                self.aid_scan_results.append(result)
+                self.write_aid_scan_log(result)
+                self.aid_scan_index += 1
+                return result
+            self.aid_scan_needs_recovery = False
 
         # Send the AID key
         payload = self.build_aid_payload(aid_name, is_tn3270e)
@@ -1670,30 +1698,14 @@ class Gr0gu3270:
         # Replay failed — recovery attempt
         if not replay_ok:
             self.logger.debug("AID scan: recovery attempt after {}...".format(aid_name))
-            time.sleep(0.5)
+            time.sleep(1.0)
             recovered = self._aid_scan_try_replay(aid_name)
             if recovered:
                 self.logger.debug("AID scan: recovered after {} — continuing".format(aid_name))
-                return result
-
-            # DOUBLE FAIL — skip remaining keys
-            self.logger.debug("AID scan: DOUBLE FAIL after {} — skipping {} remaining keys".format(
-                aid_name, len(self.aid_scan_keys) - self.aid_scan_index))
-            while self.aid_scan_index < len(self.aid_scan_keys):
-                skipped = {
-                    'aid_key': self.aid_scan_keys[self.aid_scan_index],
-                    'category': 'SKIPPED',
-                    'status': 'SKIPPED',
-                    'similarity': 0.0,
-                    'response_preview': 'Skipped — double fail after {}'.format(aid_name),
-                    'response_len': 0,
-                    'timestamp': time.time(),
-                    'replay_ok': False,
-                }
-                self.aid_scan_results.append(skipped)
-                self.write_aid_scan_log(skipped)
-                self.aid_scan_index += 1
-            self.aid_scan_running = False
+                self.aid_scan_needs_recovery = False
+            else:
+                self.logger.debug("AID scan: replay failed after {} — will retry before next key".format(aid_name))
+                self.aid_scan_needs_recovery = True
 
         return result
 

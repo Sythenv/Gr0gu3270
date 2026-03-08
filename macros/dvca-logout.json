@@ -2,6 +2,6 @@
   "name": "DVCA Logout",
   "steps": [
     {"action": "CLEAR"},
-    {"action": "SEND", "text": "LOGOUT", "aid": "ENTER"}
+    {"action": "SEND", "text": "LOGOFF", "aid": "ENTER"}
   ]
 }

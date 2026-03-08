@@ -524,8 +524,8 @@ class TestAidScanDVCA:
         assert result['category'] == 'VIOLATION'
         assert result['replay_ok'] is True
 
-    def test_session_kill_double_fail(self, h3270):
-        """DVCA: PF3 kills KICKS session — replay fails, recovery fails, remaining SKIPPED."""
+    def test_session_kill_recovery_continues(self, h3270):
+        """DVCA: PF3 kills KICKS session — replay fails, but scan continues with per-key recovery."""
         ref = self._setup_scan(h3270)
         dead_screen = ascii_to_ebcdic("TSO READY")
         h3270._aid_scan_send_and_read = lambda payload, timeout=2: dead_screen
@@ -533,13 +533,13 @@ class TestAidScanDVCA:
         result = h3270.aid_scan_next()
         # First key: tested, red dot
         assert result['replay_ok'] is False
-        # Scan stopped
-        assert h3270.aid_scan_running is False
-        # All 28 results present (1 tested + 27 SKIPPED)
-        assert len(h3270.aid_scan_results) == 24
-        skipped = [r for r in h3270.aid_scan_results if r['category'] == 'SKIPPED']
-        assert len(skipped) == 23
-        assert all(not r['replay_ok'] for r in skipped)
+        # Scan continues (no abort)
+        assert h3270.aid_scan_running is True
+        assert h3270.aid_scan_needs_recovery is True
+        # Next key: pre-recovery fails → SKIPPED, but scan still runs
+        r2 = h3270.aid_scan_next()
+        assert r2['category'] == 'SKIPPED'
+        assert h3270.aid_scan_running is True
 
     def test_transient_fail_recovery_succeeds(self, h3270):
         """DVCA: slow mainframe — first replay fails, recovery succeeds, scan continues."""
@@ -560,17 +560,16 @@ class TestAidScanDVCA:
         skipped = [r for r in h3270.aid_scan_results if r['category'] == 'SKIPPED']
         assert len(skipped) == 0
 
-    def test_replay_none_double_fail(self, h3270):
-        """DVCA: server completely dead — replay returns None, double fail."""
+    def test_replay_none_continues(self, h3270):
+        """DVCA: server completely dead — replay returns None, scan continues per-key."""
         ref = self._setup_scan(h3270)
         h3270._aid_scan_send_and_read = lambda payload, timeout=2: None
         h3270.aid_scan_replay = lambda: None  # dead
         result = h3270.aid_scan_next()
         assert result['category'] == 'TIMEOUT'
         assert result['replay_ok'] is False
-        assert h3270.aid_scan_running is False
-        skipped = [r for r in h3270.aid_scan_results if r['category'] == 'SKIPPED']
-        assert len(skipped) == 23
+        assert h3270.aid_scan_running is True
+        assert h3270.aid_scan_needs_recovery is True
 
     def test_dynamic_content_still_matches(self, h3270):
         """DVCA: timestamp changes between ref and replay — similarity still > 0.8."""
@@ -583,7 +582,7 @@ class TestAidScanDVCA:
         assert result['replay_ok'] is True
 
     def test_multiple_keys_sequence(self, h3270):
-        """DVCA: scan 3 keys — 2 OK then session kill — verify sequence."""
+        """DVCA: scan 3 keys — 2 OK then session kill — scan continues, key 4 SKIPPED."""
         ref = self._setup_scan(h3270)
         dead_screen = ascii_to_ebcdic("TSO READY")
         call_count = [0]
@@ -594,11 +593,7 @@ class TestAidScanDVCA:
             return dead_screen  # 3rd key: session dies
         h3270._aid_scan_send_and_read = mock_send
         # Replay: works for first 2, fails after 3rd
-        replay_count = [0]
         def mock_replay():
-            replay_count[0] += 1
-            # First 2 keys succeed (2 replay calls each at most)
-            # After key 3: all replays return dead screen
             if call_count[0] <= 2:
                 return ref
             return dead_screen
@@ -614,12 +609,13 @@ class TestAidScanDVCA:
 
         r3 = h3270.aid_scan_next()
         assert r3['replay_ok'] is False
-        assert h3270.aid_scan_running is False
+        assert h3270.aid_scan_running is True  # continues, no abort
+        assert h3270.aid_scan_needs_recovery is True
 
-        # 3 tested + 25 skipped = 28
-        assert len(h3270.aid_scan_results) == 24
-        tested = [r for r in h3270.aid_scan_results if r['category'] != 'SKIPPED']
-        assert len(tested) == 3
+        # Key 4: pre-recovery fails → SKIPPED
+        r4 = h3270.aid_scan_next()
+        assert r4['category'] == 'SKIPPED'
+        assert len(h3270.aid_scan_results) == 4
 
 
 # ---- PR6: Multi-Field Payload ----
