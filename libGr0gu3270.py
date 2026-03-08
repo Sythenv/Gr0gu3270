@@ -320,10 +320,8 @@ class Gr0gu3270:
 
         # State Tracking Vars
         self.hack_toggled = False
-        self.hack_color_toggled =False
         self.hack_on = False        # We in the butter zone now
-        self.hack_color_on = False
-        self.hack_prot = False      # 'Protected' Flag (Bit 6) 
+        self.hack_prot = False      # 'Protected' Flag (Bit 6)
         self.hack_hf = False        # 'Non-display' Flag (Bit 4)
         self.hack_rnr = False       # 'Numeric Only' Flag (Bit 5)
         self.hack_ei = False        # enable intentisty
@@ -331,10 +329,11 @@ class Gr0gu3270:
         self.hack_sfe = False       # Start Field Extended
         self.hack_mf = False        # Modified Field
         self.hack_hv = False        # High Visibility
-        self.hack_color_sfe = False # 
-        self.hack_color_mf = False  # 
-        self.hack_color_sa = False  # 
-        self.hack_color_hv = False  # 
+        # Hack Color is always on — reveal black-on-black fields as yellow
+        self.hack_color_sfe = True
+        self.hack_color_mf = True
+        self.hack_color_sa = True
+        self.hack_color_hv = True
 
         # Create the Loggers (file and stderr)
         self.logger = logging.getLogger(__name__)
@@ -744,7 +743,6 @@ class Gr0gu3270:
         template = "Hack {} Flag ({}): {}"
         self.logger.debug("Current Flag Settings")
         self.logger.debug("Hack Fields Enabled (hack_on): {}".format(self.hack_on))
-        self.logger.debug("Hack Fields Colors Enabled (hack_color_on): {}".format(self.hack_color_on))
         self.logger.debug(template.format("Protected","hack_prot", self.hack_prot))
         self.logger.debug(template.format("Hidden","hack_hf", self.hack_hf))
         self.logger.debug(template.format("Numeric","hack_rnr",self.hack_rnr))
@@ -814,14 +812,6 @@ class Gr0gu3270:
             self.inject_config_set, value))
         self.inject_config_set = value
 
-    def set_hack_color_toggled(self,value=1):
-        '''
-        Sets the hack_color_toggled state
-        '''
-        self.logger.debug("Changing hack_color_toggled from {} to {}".format(
-            self.hack_color_toggled, value))
-        self.hack_color_toggled = value
-
     def set_hack_toggled(self,value=1):
         '''
         Sets the hack_toggled state
@@ -837,14 +827,6 @@ class Gr0gu3270:
         self.logger.debug("Changing hack_on from {} to {}".format(
             self.hack_on, value))
         self.hack_on = value
-
-    def set_hack_color_on(self,value=1):
-        '''
-        Sets the hack_color_on state
-        '''
-        self.logger.debug("Changing hack_color_on from {} to {}".format(
-            self.hack_color_on, value))
-        self.hack_color_on = value
 
     def set_hack_prot(self,value=1):
         '''
@@ -909,38 +891,6 @@ class Gr0gu3270:
         self.logger.debug("Changing from {} to {}".format(
             self.hack_hv, value))
         self.hack_hv = value
-
-    def set_hack_color_sfe(self,value=1):
-        '''
-        Sets the hack_color_sfe state
-        '''
-        self.logger.debug("Changing hack_color_sfe from {} to {}".format(
-            self.hack_color_sfe, value))
-        self.hack_color_sfe = value
-
-    def set_hack_color_mf(self,value=1):
-        '''
-        Sets the hack_color_mf state
-        '''
-        self.logger.debug("Changing hack_color_mf from {} to {}".format(
-            self.hack_color_mf, value))
-        self.hack_color_mf = value
-
-    def set_hack_color_sa(self,value=1):
-        '''
-        Sets the hack_color_sa state
-        '''
-        self.logger.debug("Changing hack_color_sa from {} to {}".format(
-            self.hack_color_sa, value))
-        self.hack_color_sa = value
-
-    def set_hack_color_hv(self,value=1):
-        '''
-        Sets the hack_color_hv state
-        '''
-        self.logger.debug("Changing hack_color_hv from {} to {}".format(
-            self.hack_color_hv, value))
-        self.hack_color_hv = value
 
     def set_inject_mask(self,mask="*"):
         '''Sets the mask to be used for injection'''
@@ -2158,21 +2108,10 @@ class Gr0gu3270:
         if len(server_data) > 0:
             if self.hack_on:
                 log_line = self.hack_on_logline()
-            
-            if self.hack_color_on:
-                log_line = log_line + self.hack_color_on_logline()
-            
-            if self.hack_on and self.hack_color_on:
-                hacked_server = self.manipulate(server_data)
-                self.client.send(hacked_server)
-            elif self.hack_on and not self.hack_color_on:
-                hacked_server = self.manipulate(server_data)
-                self.client.send(hacked_server)
-            elif not self.hack_on and self.hack_color_on:
-                hacked_server = self.manipulate(server_data)
-                self.client.send(hacked_server)
-            else:
-                self.client.send(server_data)
+
+            # Hack Color is always on — always run manipulate()
+            hacked_server = self.manipulate(server_data)
+            self.client.send(hacked_server)
             
             self.write_database_log('S', log_line, server_data)
 
@@ -2235,60 +2174,33 @@ class Gr0gu3270:
                 if self.transaction_tracking and self.pending_transaction:
                     self.complete_transaction(self.server_data)
 
-        if self.hack_toggled or self.hack_color_toggled: # Resend data to client if either of these options are toggled.
+        if self.hack_toggled: # Resend data to client when hack fields toggled
+            self.logger.debug("Hack Toggled, resending data to client")
 
-            if self.hack_toggled:
-                self.logger.debug("Hack Toggled, resending data to client")
-            if self.hack_color_toggled:
-                self.logger.debug("Hack Color Toggled, resending data to client")
-            
             if len(self.server_data) > 0:
-                log_line = ''
+                if self.hack_on:
+                    log_line = ('Hack Field Attributes: TOGGLED ON ('
+                                'Remove Field Prot: {pt}  - '
+                                'Show Hidden: {hf} - '
+                                'Remove NUM Prot: {rnr}) ('
+                                'SF: {sf} - '
+                                'SFE: {sfe} - '
+                                'MF: {mf}  - '
+                                'EI: {ei} - '
+                                'HV: {hv})').format(
+                                    pt=self.hack_prot,
+                                    hf=self.hack_hf,
+                                    rnr=self.hack_rnr,
+                                    sf=self.hack_sf,
+                                    sfe=self.hack_sfe,
+                                    mf=self.hack_mf,
+                                    ei=self.hack_ei,
+                                    hv=self.hack_hv
+                                    )
+                else:
+                    log_line = 'Hack Fields Attributes: TOGGLED OFF '
 
-                if self.hack_toggled:
-                    if self.hack_on:
-                        log_line = ('Hack Field Attributes: TOGGLED ON (' 
-                                    'Remove Field Prot: {pt}  - '
-                                    'Show Hidden: {hf} - ' 
-                                    'Remove NUM Prot: {rnr}) (' 
-                                    'SF: {sf} - ' 
-                                    'SFE: {sfe} - '
-                                    'MF: {mf}  - ' 
-                                    'EI: {ei} - ' 
-                                    'HV: {hv})').format(
-                                        pt=self.hack_prot,
-                                        hf=self.hack_hf,
-                                        rnr=self.hack_rnr,
-                                        sf=self.hack_sf,
-                                        sfe=self.hack_sfe,
-                                        mf=self.hack_mf,
-                                        ei=self.hack_ei,
-                                        hv=self.hack_hv
-                                        )
-                    else:
-                        log_line = 'Hack Fields Attributes: TOGGLED OFF '
-
-                    self.hack_toggled = 0
-
-                if self.hack_color_toggled:
-
-                    if self.hack_color_on:
-                        log_line = log_line + (
-                            'Hack Text Color: TOGGLED ON (' 
-                            'SFE: {sfe} - '
-                            'MF: {mf} - '
-                            'SF: {sf} - '
-                            'HV: {hv})'
-                            ).format(
-                                sfe=self.hack_color_sfe,
-                                mf=self.hack_color_mf,
-                                sf=self.hack_color_sa,
-                                hv=self.hack_color_hv
-                                )
-                    else:
-                        log_line = 'Hack Text Color: TOGGLED OFF '
-
-                    self.hack_color_toggled = 0
+                self.hack_toggled = 0
 
                 hacked_server = self.manipulate(self.server_data)
                 self.client.send(hacked_server)
@@ -2369,19 +2281,6 @@ class Gr0gu3270:
                                         mf=self.hack_mf,
                                         ei=self.hack_ei,
                                         hv=self.hack_color_hv)
-
-    def hack_color_on_logline(self):
-        return ("Hack Text Color: ENABLED ("
-                    "SFE: {sfe} - "
-                    "MF: {mf} - "
-                    "SF: {sf} - " 
-                    "HV: {hv})"
-                    ).format(
-                        sfe=self.hack_color_sfe,
-                        mf=self.hack_color_mf,
-                        sf=self.hack_color_sa,
-                        hv=self.hack_color_hv
-                        )
 
     def get_ascii(self, ebcdic_string):
         ''' Converts EBCDIC to ASCII, returns ASCII string'''
@@ -2548,58 +2447,39 @@ class Gr0gu3270:
                         found_hidden_data = 0
                     continue
 
-        # Process hacking of Colors
-        self.logger.debug("Hack Colors on: {}".format(self.hack_color_on))
-        if self.hack_color_on:
-            for x in range(len(data)):
-                if data[x] == 0x29: # Start Field Extended
-                    for y in range(data[x + 1]):
-                        if(len(data) < ((x + 3) + (y * 2))):
-                            continue
-                        if self.hack_color_sfe and data[((x + 3) + (y * 2)) - 1] == 0x42: # Color
-                            if data[((x + 3) + (y * 2))] == 0xf8: # Black
-                                if self.hack_color_hv:
-                                    data[x + 1] = data[x + 1] + 2
-                                    data2 = bytearray(len(data) + 4)
-                                    data2 = data[:((x + 3) + (y * 2)) + 1] + b'\x41\xf2\x42\xf6' + data[((x + 3) + (y * 2)) + 1:]
-                                    x = x + 4
-                                else:
-                                    data[x + 1] = data[x + 1] + 1
-                                    data2 = bytearray(len(data) + 2)
-                                    data2 = data[:((x + 3) + (y * 2)) + 1] + b'\x42\xf6' + data[((x + 3) + (y * 2)) + 1:]
-                                    x = x + 2
-                                data = data2
-                elif data[x] == 0x28: # Set Attribute
-                    if self.hack_color_sa and data[x + 1] == 0x42: # Color
-                        if data[x + 2] == 0xf8: # Black
-                            if self.hack_color_hv:
-                                data2 = bytearray(len(data) + 6)
-                                data2 = data[:x + 3] + b'\x28\x41\xf2\x28\x42\xf6' + data[x + 3:]
-                                x = x + 6
-                            else:
-                                data2 = bytearray(len(data) + 3)
-                                data2 = data[:x + 3] + b'\x28\x42\xf6' + data[x + 3:]
-                                x = x + 3
+        # Process hacking of Colors (always on — reveal black-on-black fields)
+        for x in range(len(data)):
+            if data[x] == 0x29: # Start Field Extended
+                for y in range(data[x + 1]):
+                    if(len(data) < ((x + 3) + (y * 2))):
+                        continue
+                    if data[((x + 3) + (y * 2)) - 1] == 0x42: # Color
+                        if data[((x + 3) + (y * 2))] == 0xf8: # Black
+                            data[x + 1] = data[x + 1] + 2
+                            data2 = bytearray(len(data) + 4)
+                            data2 = data[:((x + 3) + (y * 2)) + 1] + b'\x41\xf2\x42\xf6' + data[((x + 3) + (y * 2)) + 1:]
+                            x = x + 4
                             data = data2
-                    continue
-                elif data[x] == 0x2c: # Modify Field
-                    for y in range(data[x + 1]):
-                        if(len(data) < ((x + 3) + (y * 2))):
-                            continue
-                        if self.hack_color_mf and data[((x + 3) + (y * 2)) - 1] == 0x42: # Color
-                            if data[((x + 3) + (y * 2))] == 0xf8: # Black
-                                if self.hack_color_hv:
-                                    data[x + 1] = data[x + 1] + 2
-                                    data2 = bytearray(len(data) + 4)
-                                    data2 = data[:((x + 3) + (y * 2)) + 1] + b'\x41\xf2\x42\xf6' + data[((x + 3) + (y * 2)) + 1:]
-                                    x = x + 4
-                                else:
-                                    data[x + 1] = data[x + 1] + 1
-                                    data2 = bytearray(len(data) + 2)
-                                    data2 = data[:((x + 3) + (y * 2)) + 1] + b'\x42\xf6' + data[((x + 3) + (y * 2)) + 1:]
-                                    x = x + 2
-                                data = data2
-                    continue
+            elif data[x] == 0x28: # Set Attribute
+                if data[x + 1] == 0x42: # Color
+                    if data[x + 2] == 0xf8: # Black
+                        data2 = bytearray(len(data) + 6)
+                        data2 = data[:x + 3] + b'\x28\x41\xf2\x28\x42\xf6' + data[x + 3:]
+                        x = x + 6
+                        data = data2
+                continue
+            elif data[x] == 0x2c: # Modify Field
+                for y in range(data[x + 1]):
+                    if(len(data) < ((x + 3) + (y * 2))):
+                        continue
+                    if data[((x + 3) + (y * 2)) - 1] == 0x42: # Color
+                        if data[((x + 3) + (y * 2))] == 0xf8: # Black
+                            data[x + 1] = data[x + 1] + 2
+                            data2 = bytearray(len(data) + 4)
+                            data2 = data[:((x + 3) + (y * 2)) + 1] + b'\x41\xf2\x42\xf6' + data[((x + 3) + (y * 2)) + 1:]
+                            x = x + 4
+                            data = data2
+                continue
 
         return(data)
         

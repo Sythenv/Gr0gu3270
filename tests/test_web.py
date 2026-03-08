@@ -118,10 +118,9 @@ def test_set_hack_fields(state):
     s = state.get_status()
     assert s['hack_on'] is True
 
-def test_set_hack_color(state):
-    state.set_hack_color({'on': 1, 'sfe': 1})
+def test_hack_color_always_on(state):
     s = state.get_status()
-    assert s['hack_color_on'] is True
+    assert s['hack_color_on'] is True  # always on, no toggle
 
 def test_toggle_abend_detection(state):
     # Enabled by default

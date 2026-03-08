@@ -143,7 +143,7 @@ class Gr0gu3270State:
                 'connected': self.connection_ready.is_set(),
                 'offline': self.h.is_offline(),
                 'hack_on': bool(self.h.hack_on),
-                'hack_color_on': bool(self.h.hack_color_on),
+                'hack_color_on': True,  # always on
                 'abend_detection': bool(self.h.abend_detection),
                 'transaction_tracking': bool(self.h.transaction_tracking),
                 'aid_scan_running': bool(self.h.aid_scan_running),
@@ -328,16 +328,6 @@ class Gr0gu3270State:
             if 'on' in data:
                 self.h.set_hack_on(int(data['on']))
                 self.h.set_hack_toggled()
-
-    def set_hack_color(self, data):
-        with self.lock:
-            if 'sfe' in data: self.h.set_hack_color_sfe(int(data['sfe']))
-            if 'mf' in data: self.h.set_hack_color_mf(int(data['mf']))
-            if 'sa' in data: self.h.set_hack_color_sa(int(data['sa']))
-            if 'hv' in data: self.h.set_hack_color_hv(int(data['hv']))
-            if 'on' in data:
-                self.h.set_hack_color_on(int(data['on']))
-                self.h.set_hack_color_toggled()
 
     def _select_wordlists(self, field):
         """Auto-select wordlists based on field attributes."""
@@ -1158,9 +1148,6 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
         if path == '/api/hack_fields':
             self.state.set_hack_fields(data)
             self._send_json({'ok': True})
-        elif path == '/api/hack_color':
-            self.state.set_hack_color(data)
-            self._send_json({'ok': True})
         elif path == '/api/send_keys':
             result = self.state.send_keys(data)
             self._send_json(result)
@@ -1540,7 +1527,6 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
       </div>
       <div class="toggles">
         <div class="toggle-pill" id="tgl-hack" onclick="toggleHackFields()" title="Hack Fields">H</div>
-        <div class="toggle-pill" id="tgl-color" onclick="toggleHackColor()" title="Hack Color">C</div>
         <div class="toggle-pill on" id="tgl-abend" style="display:none">A</div>
         <div class="toggle-pill on" id="tgl-txn" style="display:none">T</div>
         <div class="toggle-pill" onclick="toggleHelpModal()" title="Method &amp; Help" style="font-weight:bold">?</div>
@@ -1611,7 +1597,6 @@ const C = {text:CS.getPropertyValue('--text').trim(), head:CS.getPropertyValue('
 // ---- Action tabs config ----
 const ACTIONS = [
   {id:'hack-fields', label:'Hack Fields', group:0},
-  {id:'hack-color', label:'Hack Color', group:0},
   {id:'inject-keys', label:'Send Keys', group:0},
   {id:'spool', label:'SPOOL/RCE', group:1},
   {id:'logs', label:'Logs', group:2, tall:true},
@@ -1619,7 +1604,7 @@ const ACTIONS = [
 ];
 
 const GROUPS = [
-  {id:'grp-hacks', label:'HACKS', items:['hack-fields','hack-color','inject-keys']},
+  {id:'grp-hacks', label:'HACKS', items:['hack-fields','inject-keys']},
   {id:'grp-system', label:'SYSTEM', items:['spool']},
   {id:'grp-data', label:'DATA', items:['logs','statistics']},
 ];
@@ -1945,15 +1930,6 @@ function buildActionPanels() {
       <label><input type="checkbox" id="hf-hv" checked> High Vis</label>
     </div>`;
 
-  // Hack Color
-  document.getElementById('apanel-hack-color').innerHTML = `
-    <div class="controls">
-      <label><input type="checkbox" id="hc-sfe" checked> SFE</label>
-      <label><input type="checkbox" id="hc-mf" checked> MF</label>
-      <label><input type="checkbox" id="hc-sa" checked> SA</label>
-      <label><input type="checkbox" id="hc-hv" checked> High Vis</label>
-    </div>`;
-
   // Send Keys
   document.getElementById('apanel-inject-keys').innerHTML = `
     <div class="controls">
@@ -2051,8 +2027,6 @@ async function pollStatus() {
     // Update header toggle pills
     const hackPill = document.getElementById('tgl-hack');
     hackPill.className = s.hack_on ? 'toggle-pill on' : 'toggle-pill';
-    const colorPill = document.getElementById('tgl-color');
-    colorPill.className = s.hack_color_on ? 'toggle-pill on' : 'toggle-pill';
     const abendPill = document.getElementById('tgl-abend');
     abendPill.className = s.abend_detection ? 'toggle-pill on' : 'toggle-pill';
     const txnPill = document.getElementById('tgl-txn');
@@ -2224,14 +2198,6 @@ async function toggleHackFields() {
   const g = id => { const e = document.getElementById(id); return e ? (e.checked ? 1 : 0) : 1; };
   await post('/api/hack_fields', { on: on?1:0, prot:g('hf-prot'), hf:g('hf-hf'), rnr:g('hf-rnr'), sf:g('hf-sf'), sfe:g('hf-sfe'), mf:g('hf-mf'), ei:g('hf-ei'), hv:g('hf-hv') });
   toast('Hack Fields ' + (on ? 'ON' : 'OFF'), on ? 'success' : 'info');
-}
-
-async function toggleHackColor() {
-  const pill = document.getElementById('tgl-color');
-  const on = !pill.classList.contains('on');
-  const g = id => { const e = document.getElementById(id); return e ? (e.checked ? 1 : 0) : 1; };
-  await post('/api/hack_color', { on: on?1:0, sfe:g('hc-sfe'), mf:g('hc-mf'), sa:g('hc-sa'), hv:g('hc-hv') });
-  toast('Hack Color ' + (on ? 'ON' : 'OFF'), on ? 'success' : 'info');
 }
 
 async function toggleAbend() { await post('/api/abend_detection'); toast('ABEND detection toggled', 'info'); }
@@ -2483,10 +2449,10 @@ const METHOD_DATA = {
   },
   fields: {
     label: '2. FIELDS',
-    steps: ['Enable Hack Fields (Ctrl+H) to unlock all protections', 'Enable Hack Color (Ctrl+G) to visually distinguish field types', 'Modify hidden field values and submit', 'Try typing in protected fields after hack'],
+    steps: ['Enable Hack Fields (Ctrl+H) to unlock all protections', 'Hidden fields with black color are automatically revealed in yellow', 'Modify hidden field values and submit', 'Try typing in protected fields after hack'],
     cards: [
       {term:'Hack Fields', explain:'Rewrites field attribute bytes in proxy traffic to remove protection, reveal hidden, remove numeric lock.', analogy:'Like a browser extension that removes "disabled" and "readonly" from all form inputs.', action:'Toggle via Ctrl+H or header pill. Configure options in Hack Fields action tab.'},
-      {term:'Hack Color', explain:'Injects color attributes (SFE/SA) to make different field types visually distinct.', analogy:'Like a CSS injection that highlights hidden elements with bright colors.', action:'Toggle via Ctrl+G. Useful to visually spot field boundaries on the emulator.'},
+      {term:'Hack Color', explain:'Always active. Replaces black-on-black color attributes (SFE/SA/MF) with yellow so hidden text is visible on the emulator.', analogy:'Like a CSS rule that forces visibility:visible on all hidden elements.', action:'Automatic — no toggle needed.'},
       {term:'EBCDIC', explain:'Character encoding used by mainframes. All 3270 data is EBCDIC, converted by proxy.', analogy:'Like UTF-8 vs ASCII — different byte values for the same characters.', action:'The proxy handles conversion transparently. Injection payloads are auto-converted.'},
       {term:'3270 Protocol', explain:'Telnet-based protocol with structured fields, orders (SF/SFE/SBA), and AID keys.', analogy:'Like HTTP with form fields, but binary and stateful — think WebSocket + HTML forms.', action:'The proxy intercepts and modifies the binary stream. No manual protocol work needed.'},
     ],
@@ -2628,7 +2594,6 @@ document.addEventListener('keydown', function(e) {
   if (e.ctrlKey && !e.altKey && !e.shiftKey) {
     const k = e.key.toLowerCase();
     if (k === 'h') { e.preventDefault(); toggleHackFields(); return; }
-    if (k === 'g') { e.preventDefault(); toggleHackColor(); return; }
     if (k === 'b') { e.preventDefault(); toggleAbend(); return; }
     if (k === 't') { e.preventDefault(); toggleTxnTracking(); return; }
   }
@@ -2720,7 +2685,7 @@ function toggleHelpModal() {
     renderPhaseContent();
   }
   // Help text
-  document.getElementById('help-content-area').textContent = 'Gr0gu3270 - TN3270 Penetration Testing Toolkit\n\nMain view: Screen Map (top) + Findings (bottom)\nAction bar: click group headers to expand tools\n\nKeyboard Shortcuts:\n  Ctrl+H  Toggle Hack Fields\n  Ctrl+G  Toggle Hack Color\n  Ctrl+B  Toggle ABEND Detection\n  Ctrl+T  Toggle Transaction Tracking\n  Esc     Close action panel\n  ?       Open this help modal';
+  document.getElementById('help-content-area').textContent = 'Gr0gu3270 - TN3270 Penetration Testing Toolkit\n\nMain view: Screen Map (top) + Findings (bottom)\nAction bar: click group headers to expand tools\nHack Color: always active (black fields revealed as yellow)\n\nKeyboard Shortcuts:\n  Ctrl+H  Toggle Hack Fields\n  Ctrl+B  Toggle ABEND Detection\n  Ctrl+T  Toggle Transaction Tracking\n  Esc     Close action panel\n  ?       Open this help modal';
 }
 
 // ---- Init ----
