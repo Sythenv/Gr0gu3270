@@ -1321,7 +1321,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
   --dim: #004d3a;
   --glow: rgba(0,108,77,0.4);
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; scrollbar-width: thin; scrollbar-color: var(--border) var(--bg); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--dim); }
 body { font-family: 'Consolas','Monaco','Courier New',monospace; background: var(--bg); color: var(--text); font-size: 22px; display: flex; flex-direction: column; height: 100vh; overflow: hidden; text-shadow: 0 0 5px var(--glow); padding: 0 20px; align-items: center; }
 .container { max-width: 1200px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:9998; background: repeating-linear-gradient(0deg, rgba(0,0,0,0.06) 0px, rgba(0,0,0,0.06) 1px, transparent 1px, transparent 3px); }
@@ -1329,7 +1333,7 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 /* Header */
 .header { background: var(--bg); padding: 0; display: flex; align-items: stretch; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .header-left { display: flex; flex-direction: column; flex: 1; min-width: 0; justify-content: flex-end; }
-.header .h-title { background: var(--head); color: var(--bg); padding: 5px 10px; font-size: 22px; font-weight: bold; }
+.header .h-title { background: var(--head); color: var(--bg); padding: 5px 10px; font-size: 22px; font-weight: bold; display: flex; flex-direction: column; align-items: center; }
 .header .status { font-size: 17px; color: var(--dim); padding: 0 10px; white-space: nowrap; }
 .header .status .online { color: var(--text); }
 .header .status .offline { color: var(--alert); }
@@ -1391,11 +1395,7 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 .controls input[type="checkbox"] { accent-color: var(--head); }
 .fuzz-diff { cursor: help; color: #f90; font-weight: bold; }
 .fuzz-overlay { position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center; }
-.fuzz-popup { background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:16px;width:min(700px,90vw);max-height:80vh;overflow-y:auto;font-size:15px;scrollbar-width:thin;scrollbar-color:var(--border) var(--bg); }
-.fuzz-popup::-webkit-scrollbar { width:6px; }
-.fuzz-popup::-webkit-scrollbar-track { background:var(--bg); }
-.fuzz-popup::-webkit-scrollbar-thumb { background:var(--border);border-radius:3px; }
-.fuzz-popup::-webkit-scrollbar-thumb:hover { background:var(--dim); }
+.fuzz-popup { background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:16px;width:min(700px,90vw);max-height:80vh;overflow-y:auto;font-size:15px; }
 .fuzz-popup h3 { margin:0 0 8px 0;font-size:17px;color:var(--head); }
 .fuzz-popup .fuzz-field-info { color:var(--dim);margin-bottom:8px; }
 .fuzz-popup .fuzz-controls { display:flex;gap:8px;align-items:center;margin-bottom:8px; }
@@ -1479,7 +1479,15 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 /* Splash screen */
 #splash { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.5s; }
 #splash.hidden { opacity: 0; pointer-events: none; }
-#splash .splash-title { background: var(--head); color: var(--bg); padding: 4px 24px; font-size: 30px; font-weight: bold; margin-bottom: 12px; text-shadow: none; }
+#splash .splash-title { background: var(--head); color: var(--bg); padding: 12px 24px 4px; font-size: 30px; font-weight: bold; margin-bottom: 12px; text-shadow: none; display: flex; flex-direction: column; align-items: center; }
+.grogu-art { display: grid; grid-template-columns: repeat(20, var(--gs, 14px)); gap: 0; margin-bottom: 4px; }
+.grogu-art .gp { width: var(--gs, 14px); height: var(--gs, 14px); }
+.grogu-art .g1 { background: #22482c; } .grogu-art .g2 { background: #3c9d30; }
+.grogu-art .g3 { background: #000; } .grogu-art .g4 { background: #e9a3c0; }
+.grogu-art .g5 { background: #bf1864; } .grogu-art .g6 { background: #643800; }
+.grogu-art .g7 { background: #fdc98d; }
+#splash .grogu-art { --gs: 18px; }
+.header .h-title .grogu-art { --gs: 3px; margin-bottom: 1px; }
 #splash .splash-status { color: var(--text); font-size: 20px; }
 @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
 #splash .splash-cursor { animation: blink 1s step-end infinite; }
@@ -1488,7 +1496,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 <body>
 <!-- SPLASH SCREEN -->
 <div id="splash">
-  <div class="splash-title">Gr0gu3270</div>
+  <div class="splash-title"><div class="grogu-art" id="grogu-splash"></div>Gr0gu3270</div>
   <div class="splash-status" id="splash-status"><span class="splash-cursor">_</span> CONNECTING...</div>
 </div>
 
@@ -1499,7 +1507,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 <div class="header">
   <div class="header-left">
     <div class="header-bottom">
-      <span class="h-title">Gr0gu3270</span>
+      <div class="h-title"><div class="grogu-art" id="grogu-header"></div>Gr0gu3270</div>
       <div class="status">
         <span id="conn-status">...</span>
         <span id="project-name" style="margin-left:6px"></span>
@@ -1577,6 +1585,14 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 </div><!-- /container -->
 
 <script>
+// ---- Grogu pixel art ----
+(function(){
+const D='00000001111110000000000000122222210000001112112222222211211111222133322333122211445222330223302225440441223332233322144000441122222222114400000366666666666630000003777666666777300000003766666666730000000037767667677300000000237676676732000000000376766767300000000003667667663000000000003776677300000000000003333330000000';
+const C=['','g1','g2','g3','g4','g5','g6','g7'];
+document.querySelectorAll('.grogu-art').forEach(g=>{
+  for(let i=0;i<D.length;i++){const v=+D[i];const d=document.createElement('div');d.className='gp'+(v?' '+C[v]:'');g.appendChild(d);}
+});
+})();
 // ---- CSS variable bridge ----
 const CS = getComputedStyle(document.documentElement);
 const C = {text:CS.getPropertyValue('--text').trim(), head:CS.getPropertyValue('--head').trim(), dim:CS.getPropertyValue('--dim').trim(), alert:CS.getPropertyValue('--alert').trim()};
@@ -2207,7 +2223,7 @@ function openAidScanPopup() {
       <span style="color:var(--dim)"><b id="as-unmapped">0</b> UNMAPPED</span>
       <span style="color:var(--dim)"><b id="as-skipped">0</b> SKIP</span>
     </div>
-    <div style="max-height:400px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) var(--bg)">
+    <div style="max-height:400px;overflow-y:auto;">
       <table style="table-layout:fixed;width:100%"><thead><tr>
         <th style="width:70px">Key</th><th style="width:100px">Category</th><th style="width:50px">Sim</th><th>Preview</th>
       </tr></thead><tbody id="aid-scan-table"></tbody></table>
