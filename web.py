@@ -329,8 +329,14 @@ class Gr0gu3270State:
         inj_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'injections')
         is_hidden = field.get('hidden', False)
         is_numeric = field.get('numeric', False)
+        is_short = field.get('length', 0) <= 8
 
-        if is_hidden:
+        if is_short:
+            if is_numeric:
+                order = ['short-numeric.txt', 'short-alpha.txt']
+            else:
+                order = ['short-alpha.txt', 'short-numeric.txt']
+        elif is_hidden:
             order = ['hidden-tampering.txt', 'boundary-values.txt', 'cobol-overflow.txt']
         elif is_numeric:
             order = ['boundary-values.txt', 'cobol-overflow.txt']
@@ -412,6 +418,7 @@ class Gr0gu3270State:
             probe_len = (flen + 50) if flen > 0 else 50
             probe_text = 'A' * probe_len
             field_loc = 'R{},C{}'.format(fields[0]['row'], fields[0]['col'])
+            field_label = fields[0].get('label', '')
 
             probe_fields = [(probe_text, fields[0]['row'], fields[0]['col'])]
             with self.lock:
@@ -468,11 +475,14 @@ class Gr0gu3270State:
             # Emit finding if probe caused ABEND
             if probe_abend:
                 with self.lock:
+                    constat = "Overflow probe on field '{}' {} (len={}): sent {} chars, caused ABEND {} on transaction {}.".format(
+                        field_label, field_loc, flen, probe_len, probe_abend, txn_code or 'unknown')
                     self.h.emit_finding('HIGH', 'FUZZER',
                                         'Overflow probe ({}+50 chars) caused ABEND {} on field {} — buffer overflow confirmed'.format(
                                             flen, probe_abend, field_loc),
                                         txn_code=txn_code,
-                                        dedup_key='FUZZER:OVERFLOW:{}:{}'.format(probe_abend, field_loc))
+                                        dedup_key='FUZZER:OVERFLOW:{}:{}'.format(probe_abend, field_loc),
+                                        constat=constat)
 
             # Recovery after probe (same pattern as main loop)
             if ref_screen and probe_data:
@@ -581,25 +591,34 @@ class Gr0gu3270State:
                     field_loc = 'R{},C{}'.format(fields[0]['row'], fields[0]['col'])
                     if classification == 'ABEND':
                         with self.lock:
+                            constat = 'Payload "{}" ({}) on field \'{}\' {} caused ABEND {} on transaction {}.'.format(
+                                line[:60], source_file, field_label, field_loc, abend_code or '?', txn_code or 'unknown')
                             self.h.emit_finding('HIGH', 'FUZZER',
                                                 'Payload "{}" ({}) caused ABEND {} on field {}'.format(
                                                     line[:60], source_file, abend_code or '?', field_loc),
                                                 txn_code=txn_code,
-                                                dedup_key='FUZZER:ABEND:{}:{}'.format(abend_code or '?', line[:60]))
+                                                dedup_key='FUZZER:ABEND:{}:{}'.format(abend_code or '?', line[:60]),
+                                                constat=constat)
                     elif classification == 'DENIED':
                         with self.lock:
+                            constat = 'Payload "{}" ({}) on field \'{}\' {} denied by ESM on transaction {}.'.format(
+                                line[:60], source_file, field_label, field_loc, txn_code or 'unknown')
                             self.h.emit_finding('MEDIUM', 'FUZZER',
                                                 'Payload "{}" ({}) denied by ESM on field {}'.format(
                                                     line[:60], source_file, field_loc),
                                                 txn_code=txn_code,
-                                                dedup_key='FUZZER:DENIED:{}'.format(line[:60]))
+                                                dedup_key='FUZZER:DENIED:{}'.format(line[:60]),
+                                                constat=constat)
                     elif classification == 'NAVIGATED':
                         with self.lock:
+                            constat = 'Payload "{}" ({}) on field \'{}\' {} on transaction {} caused navigation to different screen.'.format(
+                                line[:60], source_file, field_label, field_loc, txn_code or 'unknown')
                             self.h.emit_finding('MEDIUM', 'FUZZER',
                                                 'Payload "{}" ({}) changed screen on field {}'.format(
                                                     line[:60], source_file, field_loc),
                                                 txn_code=txn_code,
-                                                dedup_key='FUZZER:NAVIGATED:{}'.format(line[:60]))
+                                                dedup_key='FUZZER:NAVIGATED:{}'.format(line[:60]),
+                                                constat=constat)
                 else:
                     self.fuzz_results.append({
                         'payload': line,
@@ -711,7 +730,8 @@ class Gr0gu3270State:
                      'timestamp_fmt': str(datetime.datetime.fromtimestamp(float(r[1]))),
                      'severity': r[2], 'source': r[3],
                      'txn_code': r[4], 'message': r[5],
-                     'status': r[7] if len(r) > 7 and r[7] else 'NEW'} for r in rows]
+                     'status': r[7] if len(r) > 7 and r[7] else 'NEW',
+                     'constat': r[9] if len(r) > 9 else None} for r in rows]
 
     def get_findings_summary(self):
         with self.lock:
@@ -735,6 +755,7 @@ class Gr0gu3270State:
                 'txn_code': row[4], 'message': row[5],
                 'status': row[7] if len(row) > 7 and row[7] else 'NEW',
                 'remediation': row[8] if len(row) > 8 and row[8] else cls.get('remediation', ''),
+                'constat': row[9] if len(row) > 9 else None,
                 'description': cls.get('description', ''),
             }
 
@@ -745,7 +766,8 @@ class Gr0gu3270State:
                 return {'ok': False, 'message': 'Missing id'}
             status = data.get('status')
             remediation = data.get('remediation')
-            ok = self.h.update_finding(fid, status=status, remediation=remediation)
+            constat = data.get('constat')
+            ok = self.h.update_finding(fid, status=status, remediation=remediation, constat=constat)
             return {'ok': ok}
 
     # ---- Macro Engine ----
@@ -1685,7 +1707,7 @@ async function openFindingPopup(id) {
     </div>
     <div style="margin-bottom:12px">
       <label style="color:var(--dim);font-size:12px;display:block;margin-bottom:4px">CONSTAT</label>
-      <div style="color:var(--text);font-size:14px;white-space:pre-wrap;background:var(--input-bg);border:1px solid var(--border);padding:8px">${esc(f.message)}</div>
+      <textarea id="finding-constat" rows="4" style="width:100%;box-sizing:border-box;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:8px;font-family:inherit;font-size:14px;resize:vertical">${esc(f.constat||f.message)}</textarea>
     </div>
     <div style="margin-bottom:8px">
       <label style="color:var(--dim);font-size:12px;display:block;margin-bottom:4px">REMEDIATION</label>
@@ -1720,7 +1742,8 @@ async function saveFinding() {
   if (!findingPopupId) return;
   const status = findingStatus;
   const remediation = document.getElementById('finding-remed')?.value;
-  const r = await post('/api/findings/update', {id: findingPopupId, status, remediation});
+  const constat = document.getElementById('finding-constat')?.value;
+  const r = await post('/api/findings/update', {id: findingPopupId, status, remediation, constat});
   if (r.ok) {
     toast('Finding updated', 'success');
     findingSince = 0; findingsData = [];

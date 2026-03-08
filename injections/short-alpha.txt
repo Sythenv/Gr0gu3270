@@ -1,0 +1,25 @@
+# Short alpha payloads — type confusion on PIC 9 / numeric fields
+# Hypothesis: letters in numeric field → S0C7 (ASRA) if MOVE to COMP or arithmetic
+# Max 4 chars — designed for short fields where truncation kills longer payloads
+AAAA
+ABCD
+aaaa
+ZZZZ
+TEST
+@@@@
+####
+$$$$
+????
+!!!!
+&&&&
+;;;;
+''''
+""""
+....
+,,,,
+****
+++++
+----
+====
+
+XXXX

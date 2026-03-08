@@ -365,17 +365,31 @@ def test_fuzz_go_no_fields(state):
     assert 'No field' in r['message']
 
 def test_fuzz_go_auto_select_alpha(state):
-    """_select_wordlists returns correct files for alpha fields."""
-    lines, sources = state._select_wordlists({'numeric': False, 'hidden': False})
+    """_select_wordlists returns correct files for long alpha fields."""
+    lines, sources = state._select_wordlists({'numeric': False, 'hidden': False, 'length': 44})
     assert 'boundary-values.txt' in sources
     assert 'db2-injections.txt' in sources
     assert len(lines) > 0
 
 def test_fuzz_go_auto_select_numeric(state):
-    """_select_wordlists returns correct files for numeric fields."""
-    lines, sources = state._select_wordlists({'numeric': True, 'hidden': False})
+    """_select_wordlists returns correct files for long numeric fields."""
+    lines, sources = state._select_wordlists({'numeric': True, 'hidden': False, 'length': 44})
     assert 'boundary-values.txt' in sources
     assert 'db2-injections.txt' not in sources
+
+def test_fuzz_go_auto_select_short_numeric(state):
+    """_select_wordlists returns short wordlists for short numeric fields."""
+    lines, sources = state._select_wordlists({'numeric': True, 'hidden': False, 'length': 4})
+    assert 'short-numeric.txt' in sources
+    assert 'short-alpha.txt' in sources
+    assert 'boundary-values.txt' not in sources
+
+def test_fuzz_go_auto_select_short_alpha(state):
+    """_select_wordlists returns short wordlists for short alpha fields."""
+    lines, sources = state._select_wordlists({'numeric': False, 'hidden': False, 'length': 4})
+    assert 'short-alpha.txt' in sources
+    assert 'short-numeric.txt' in sources
+    assert sources[0] == 'short-alpha.txt'
 
 def test_fuzz_timeout_clamp(state):
     """Fuzz timeout is clamped to 0.5-10.0 range."""
@@ -950,6 +964,26 @@ def test_update_finding_via_state(state):
     detail = state.get_finding_detail(fid)
     assert detail['status'] == 'CONFIRMED'
     assert detail['remediation'] == 'Fix it'
+
+
+def test_get_finding_detail_constat(state):
+    """get_finding_detail returns constat field."""
+    state.h.emit_finding('HIGH', 'ABEND', 'constat detail', dedup_key='web_con1',
+                         constat='ABEND ASRA on MCMM.')
+    findings = state.get_findings()
+    detail = state.get_finding_detail(findings[0]['id'])
+    assert detail['constat'] == 'ABEND ASRA on MCMM.'
+
+
+def test_update_finding_constat(state):
+    """update_finding_detail accepts constat edits."""
+    state.h.emit_finding('MEDIUM', 'FUZZER', 'constat update', dedup_key='web_con2')
+    findings = state.get_findings()
+    fid = findings[0]['id']
+    result = state.update_finding_detail({'id': fid, 'constat': 'Edited constat'})
+    assert result['ok'] is True
+    detail = state.get_finding_detail(fid)
+    assert detail['constat'] == 'Edited constat'
 
 
 def test_http_api_findings(web_server):

@@ -1,0 +1,23 @@
+# Short numeric payloads — boundary/logic on PIC 9(4) and similar
+# Hypothesis: edge values trigger COBOL arithmetic overflow, validation bypass, or logic errors
+# Max 4 chars — designed for short numeric fields (supervisor codes, quantities, etc.)
+0000
+0001
+9999
+-001
+-999
+0
+1
+-1
+99
+00
++001
++999
+0.01
+9.99
+-.01
+1E99
+1E-9
+0.0
+.001
+1/0

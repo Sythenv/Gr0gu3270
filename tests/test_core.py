@@ -904,6 +904,27 @@ class TestFindings:
         row = h3270.get_finding(fid)
         assert row[8] == 'Fix the COBOL program'
 
+    def test_emit_finding_with_constat(self, h3270):
+        """constat is properly stored at index [9]."""
+        h3270.emit_finding('HIGH', 'ABEND', 'test msg', dedup_key='con1',
+                           constat='ABEND ASRA detected on transaction MCMM.')
+        row = h3270.all_findings()[0]
+        assert row[9] == 'ABEND ASRA detected on transaction MCMM.'
+
+    def test_emit_finding_constat_default_none(self, h3270):
+        """constat defaults to None when not provided."""
+        h3270.emit_finding('HIGH', 'ABEND', 'no constat', dedup_key='con2')
+        row = h3270.all_findings()[0]
+        assert row[9] is None
+
+    def test_update_finding_constat(self, h3270):
+        """update_finding can set constat text."""
+        h3270.emit_finding('HIGH', 'ABEND', 'constat upd', dedup_key='con3')
+        fid = h3270.all_findings()[0][0]
+        h3270.update_finding(fid, constat='Edited by auditor')
+        row = h3270.get_finding(fid)
+        assert row[9] == 'Edited by auditor'
+
     def test_finding_classes_dict(self, h3270):
         """FINDING_CLASSES has all 6 sources with description and remediation."""
         from libGr0gu3270 import FINDING_CLASSES

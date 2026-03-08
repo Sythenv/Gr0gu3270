@@ -562,7 +562,8 @@ class Gr0gu3270:
                             MESSAGE TEXT,
                             DEDUP_KEY TEXT UNIQUE,
                             STATUS TEXT DEFAULT 'NEW',
-                            REMEDIATION TEXT)
+                            REMEDIATION TEXT,
+                            CONSTAT TEXT)
                             """)
             self.sql_con.commit()
         else:
@@ -573,6 +574,9 @@ class Gr0gu3270:
                 self.sql_con.commit()
             if 'REMEDIATION' not in cols:
                 self.sql_cur.execute("ALTER TABLE Findings ADD COLUMN REMEDIATION TEXT")
+                self.sql_con.commit()
+            if 'CONSTAT' not in cols:
+                self.sql_cur.execute("ALTER TABLE Findings ADD COLUMN CONSTAT TEXT")
                 self.sql_con.commit()
 
     def write_database_log(self, direction, notes, data):
@@ -905,14 +909,14 @@ class Gr0gu3270:
 
     # ---- Findings ----
 
-    def emit_finding(self, severity, source, message, txn_code=None, dedup_key=None):
+    def emit_finding(self, severity, source, message, txn_code=None, dedup_key=None, constat=None):
         '''Emit a security finding with deduplication.'''
         if dedup_key is None:
             dedup_key = '{}:{}'.format(source, message[:100])
         try:
             self.sql_cur.execute(
-                "INSERT OR IGNORE INTO Findings (TIMESTAMP, SEVERITY, SOURCE, TXN_CODE, MESSAGE, DEDUP_KEY) VALUES (?, ?, ?, ?, ?, ?)",
-                (str(time.time()), severity, source, txn_code, message, dedup_key))
+                "INSERT OR IGNORE INTO Findings (TIMESTAMP, SEVERITY, SOURCE, TXN_CODE, MESSAGE, DEDUP_KEY, CONSTAT) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (str(time.time()), severity, source, txn_code, message, dedup_key, constat))
             self.sql_con.commit()
             return self.sql_cur.rowcount > 0
         except Exception:
@@ -931,14 +935,16 @@ class Gr0gu3270:
         self.sql_cur.execute("SELECT * FROM Findings WHERE ID = ?", (finding_id,))
         return self.sql_cur.fetchone()
 
-    def update_finding(self, finding_id, status=None, remediation=None):
-        '''Update finding status and/or remediation.'''
+    def update_finding(self, finding_id, status=None, remediation=None, constat=None):
+        '''Update finding status, remediation, and/or constat.'''
         if status is not None:
             if status not in ('NEW', 'CONFIRMED', 'FALSE_POSITIVE'):
                 return False
             self.sql_cur.execute("UPDATE Findings SET STATUS = ? WHERE ID = ?", (status, finding_id))
         if remediation is not None:
             self.sql_cur.execute("UPDATE Findings SET REMEDIATION = ? WHERE ID = ?", (remediation, finding_id))
+        if constat is not None:
+            self.sql_cur.execute("UPDATE Findings SET CONSTAT = ? WHERE ID = ?", (constat, finding_id))
         self.sql_con.commit()
         return True
 
@@ -1141,9 +1147,14 @@ class Gr0gu3270:
         for f in fields:
             if f.get('hidden'):
                 txn = self.pending_transaction['code'] if self.pending_transaction else None
+                label = f.get('label', '')
+                content = f.get('content', '')
+                constat = "Hidden field '{}' at R{},C{} (len={}, content=\"{}\") on transaction {}.".format(
+                    label, f['row'], f['col'], f.get('length', 0), content[:40], txn or 'unknown')
                 self.emit_finding('MEDIUM', 'SCREEN_MAP',
                                   'Hidden field at row {} col {} (len={})'.format(f['row'], f['col'], f.get('length', 0)),
-                                  txn_code=txn, dedup_key='SCREEN_MAP:hidden:{}:{}'.format(f['row'], f['col']))
+                                  txn_code=txn, dedup_key='SCREEN_MAP:hidden:{}:{}'.format(f['row'], f['col']),
+                                  constat=constat)
 
         return fields
 
@@ -1668,12 +1679,22 @@ class Gr0gu3270:
 
         # Emit finding for interesting AID scan results
         cat = result['category']
+        aid_txn = self.aid_scan_txn_code or 'unknown'
+        aid_code = self.AIDS.get(aid_name, (0,))[0] if aid_name in self.AIDS else 0
         if cat == 'VIOLATION':
+            constat = 'AID key {} (0x{:02X}) on transaction {} triggered security violation.'.format(
+                aid_name, aid_code, aid_txn)
             self.emit_finding('HIGH', 'AID_SCAN', '{} triggered security violation'.format(aid_name),
-                              dedup_key='AID_SCAN:VIOLATION:{}'.format(aid_name))
+                              txn_code=self.aid_scan_txn_code,
+                              dedup_key='AID_SCAN:VIOLATION:{}'.format(aid_name),
+                              constat=constat)
         elif cat == 'NEW_SCREEN':
+            constat = 'AID key {} (0x{:02X}) on transaction {} navigated to new screen (similarity={:.3f}).'.format(
+                aid_name, aid_code, aid_txn, result.get('similarity', 0))
             self.emit_finding('INFO', 'AID_SCAN', '{} navigated to new screen'.format(aid_name),
-                              dedup_key='AID_SCAN:NEW_SCREEN:{}'.format(aid_name))
+                              txn_code=self.aid_scan_txn_code,
+                              dedup_key='AID_SCAN:NEW_SCREEN:{}'.format(aid_name),
+                              constat=constat)
 
         self.logger.debug("AID scan: {} -> {} (replay: {})".format(
             aid_name, result['category'], 'OK' if replay_ok else 'FAIL'))
@@ -1802,7 +1823,8 @@ class Gr0gu3270:
             result['status'] = 'SPOOL_OPEN'
             result['detail'] = 'SPOOLOPEN returned NORMAL — SPOOL API accessible. RCE via INTRDR is possible.'
             self.emit_finding('CRIT', 'SPOOL', 'SPOOL API accessible — RCE via INTRDR possible',
-                              dedup_key='SPOOL:OPEN')
+                              dedup_key='SPOOL:OPEN',
+                              constat='SPOOL API accessible via CECI SPOOLOPEN. JES2 INTRDR write possible (RCE).')
         else:
             result['status'] = 'SPOOL_CLOSED'
             fail_reason = 'Unknown'
@@ -2033,8 +2055,11 @@ class Gr0gu3270:
                 # Emit finding
                 txn = self.pending_transaction['code'] if self.pending_transaction else None
                 sev = ABEND_SEVERITY.get(abend['code'], 'MEDIUM')
+                constat = 'ABEND {} ({}) detected on transaction {}. Passive detection (log #{}).'.format(
+                    abend['code'], abend['description'], txn or 'unknown', log_id)
                 self.emit_finding(sev, 'ABEND', '{}: {}'.format(abend['code'], abend['description']),
-                                  txn_code=txn, dedup_key='ABEND:{}:{}'.format(abend['code'], txn or ''))
+                                  txn_code=txn, dedup_key='ABEND:{}:{}'.format(abend['code'], txn or ''),
+                                  constat=constat)
                 # Annotate the log notes
                 self.sql_cur.execute(
                     "UPDATE Logs SET NOTES = NOTES || ? WHERE ID = ?",
