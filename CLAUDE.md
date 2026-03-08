@@ -46,7 +46,7 @@ Python 3.11+. Zero dependance externe.
 
 - `Gr0gu3270.py` — CLI entry point (74 lignes)
 - `libGr0gu3270.py` — Core library (~2550 lignes) : protocole 3270, EBCDIC, injection, ABEND detection, screen map, transactions, security classification, AID scan, SPOOL/RCE, macro engine, Findings, SQLite
-- `web.py` — Web UI (~2650 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 30 endpoints API, Findings panel, 5 accordion tabs + AID Scan/Fuzz popups. Hack Color always on (no toggle).
+- `web.py` — Web UI (~2600 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 28 endpoints API, Findings panel, 5 accordion tabs + AID Scan/Fuzz popups. Always on: Hack Color, ABEND Detection, Transaction Tracking.
 
 ### Data Flow
 

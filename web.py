@@ -144,8 +144,8 @@ class Gr0gu3270State:
                 'offline': self.h.is_offline(),
                 'hack_on': bool(self.h.hack_on),
                 'hack_color_on': True,  # always on
-                'abend_detection': bool(self.h.abend_detection),
-                'transaction_tracking': bool(self.h.transaction_tracking),
+                'abend_detection': True,  # always on
+                'transaction_tracking': True,  # always on
                 'aid_scan_running': bool(self.h.aid_scan_running),
                 'disabled_tabs': self.disabled_tabs,
                 'version': libGr0gu3270.__version__,
@@ -875,18 +875,6 @@ class Gr0gu3270State:
         self._cmd_queue.put(('Send text: ' + text, payload))
         return {'ok': True, 'message': 'Text sent: ' + text}
 
-    def toggle_abend_detection(self):
-        with self.lock:
-            current = self.h.get_abend_detection()
-            self.h.set_abend_detection(0 if current else 1)
-            return {'on': bool(self.h.get_abend_detection())}
-
-    def toggle_transaction_tracking(self):
-        with self.lock:
-            current = self.h.get_transaction_tracking()
-            self.h.set_transaction_tracking(0 if current else 1)
-            return {'on': bool(self.h.get_transaction_tracking())}
-
     def spool_check(self):
         with self.lock:
             result = self.h.spool_check()
@@ -1153,12 +1141,6 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(result)
         elif path == '/api/send_text':
             result = self.state.send_text(data)
-            self._send_json(result)
-        elif path == '/api/abend_detection':
-            result = self.state.toggle_abend_detection()
-            self._send_json(result)
-        elif path == '/api/transaction_tracking':
-            result = self.state.toggle_transaction_tracking()
             self._send_json(result)
         elif path == '/api/export_csv':
             result = self.state.export_csv()
@@ -1527,8 +1509,6 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
       </div>
       <div class="toggles">
         <div class="toggle-pill" id="tgl-hack" onclick="toggleHackFields()" title="Hack Fields">H</div>
-        <div class="toggle-pill on" id="tgl-abend" style="display:none">A</div>
-        <div class="toggle-pill on" id="tgl-txn" style="display:none">T</div>
         <div class="toggle-pill" onclick="toggleHelpModal()" title="Method &amp; Help" style="font-weight:bold">?</div>
       </div>
     </div>
@@ -2027,10 +2007,6 @@ async function pollStatus() {
     // Update header toggle pills
     const hackPill = document.getElementById('tgl-hack');
     hackPill.className = s.hack_on ? 'toggle-pill on' : 'toggle-pill';
-    const abendPill = document.getElementById('tgl-abend');
-    abendPill.className = s.abend_detection ? 'toggle-pill on' : 'toggle-pill';
-    const txnPill = document.getElementById('tgl-txn');
-    txnPill.className = s.transaction_tracking ? 'toggle-pill on' : 'toggle-pill';
   } catch(e) { /* non-critical */ }
 }
 setInterval(pollStatus, 1000);
@@ -2200,8 +2176,6 @@ async function toggleHackFields() {
   toast('Hack Fields ' + (on ? 'ON' : 'OFF'), on ? 'success' : 'info');
 }
 
-async function toggleAbend() { await post('/api/abend_detection'); toast('ABEND detection toggled', 'info'); }
-async function toggleTxnTracking() { await post('/api/transaction_tracking'); toast('Transaction tracking toggled', 'info'); }
 
 async function sendSelectedKeys() {
   const checks = document.querySelectorAll('#aid-checkboxes input[type=checkbox]:checked');
@@ -2594,8 +2568,6 @@ document.addEventListener('keydown', function(e) {
   if (e.ctrlKey && !e.altKey && !e.shiftKey) {
     const k = e.key.toLowerCase();
     if (k === 'h') { e.preventDefault(); toggleHackFields(); return; }
-    if (k === 'b') { e.preventDefault(); toggleAbend(); return; }
-    if (k === 't') { e.preventDefault(); toggleTxnTracking(); return; }
   }
   if (e.key === 'Escape' && activeGroup) {
     toggleGroup(activeGroup);
@@ -2685,7 +2657,7 @@ function toggleHelpModal() {
     renderPhaseContent();
   }
   // Help text
-  document.getElementById('help-content-area').textContent = 'Gr0gu3270 - TN3270 Penetration Testing Toolkit\n\nMain view: Screen Map (top) + Findings (bottom)\nAction bar: click group headers to expand tools\nHack Color: always active (black fields revealed as yellow)\n\nKeyboard Shortcuts:\n  Ctrl+H  Toggle Hack Fields\n  Ctrl+B  Toggle ABEND Detection\n  Ctrl+T  Toggle Transaction Tracking\n  Esc     Close action panel\n  ?       Open this help modal';
+  document.getElementById('help-content-area').textContent = 'Gr0gu3270 - TN3270 Penetration Testing Toolkit\n\nMain view: Screen Map (top) + Findings (bottom)\nAction bar: click group headers to expand tools\n\nAlways active: Hack Color, ABEND Detection, Transaction Tracking\n\nKeyboard Shortcuts:\n  Ctrl+H  Toggle Hack Fields\n  Esc     Close action panel\n  ?       Open this help modal';
 }
 
 // ---- Init ----

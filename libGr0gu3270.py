@@ -292,7 +292,7 @@ class Gr0gu3270:
         self.found_aids = [] # for keeping track of AIDs found on screen
 
         # ABEND Detection (PR1)
-        self.abend_detection = True
+        self.abend_detection = True  # always on — no toggle
         self.abend_history = []
         self.abend_count = 0
 
@@ -300,7 +300,7 @@ class Gr0gu3270:
         self.current_screen_map = []
 
         # Transaction Correlation (PR3)
-        self.transaction_tracking = True
+        self.transaction_tracking = True  # always on — no toggle
         self.pending_transaction = None
         self.transaction_history = []
 
@@ -899,12 +899,6 @@ class Gr0gu3270:
 
     # ---- PR1: ABEND Detection Methods ----
 
-    def get_abend_detection(self):
-        return self.abend_detection
-
-    def set_abend_detection(self, value=1):
-        self.abend_detection = value
-
     def get_abend_count(self):
         return self.abend_count
 
@@ -1214,12 +1208,6 @@ class Gr0gu3270:
         return self.current_screen_map
 
     # ---- PR3: Transaction Correlation Methods ----
-
-    def get_transaction_tracking(self):
-        return self.transaction_tracking
-
-    def set_transaction_tracking(self, value=1):
-        self.transaction_tracking = value
 
     def detect_transaction_code(self, client_data):
         '''
@@ -2118,25 +2106,24 @@ class Gr0gu3270:
             # PR2: Parse screen map
             self.parse_screen_map(server_data)
 
-            # PR1: ABEND detection
-            if self.abend_detection:
-                abends = self.detect_abend(server_data)
-                for abend in abends:
-                    # Get the log ID of the record just written
-                    self.sql_cur.execute("SELECT MAX(ID) FROM Logs")
-                    log_id = self.sql_cur.fetchone()[0]
-                    self.write_abend_log(abend, log_id)
-                    # Emit finding
-                    txn = self.pending_transaction['code'] if self.pending_transaction else None
-                    sev = ABEND_SEVERITY.get(abend['code'], 'MEDIUM')
-                    self.emit_finding(sev, 'ABEND', '{}: {}'.format(abend['code'], abend['description']),
-                                      txn_code=txn, dedup_key='ABEND:{}:{}'.format(abend['code'], txn or ''))
-                    # Annotate the log notes
-                    self.sql_cur.execute(
-                        "UPDATE Logs SET NOTES = NOTES || ? WHERE ID = ?",
-                        (' [ABEND: {}]'.format(abend['code']), log_id)
-                    )
-                    self.sql_con.commit()
+            # PR1: ABEND detection (always on)
+            abends = self.detect_abend(server_data)
+            for abend in abends:
+                # Get the log ID of the record just written
+                self.sql_cur.execute("SELECT MAX(ID) FROM Logs")
+                log_id = self.sql_cur.fetchone()[0]
+                self.write_abend_log(abend, log_id)
+                # Emit finding
+                txn = self.pending_transaction['code'] if self.pending_transaction else None
+                sev = ABEND_SEVERITY.get(abend['code'], 'MEDIUM')
+                self.emit_finding(sev, 'ABEND', '{}: {}'.format(abend['code'], abend['description']),
+                                  txn_code=txn, dedup_key='ABEND:{}:{}'.format(abend['code'], txn or ''))
+                # Annotate the log notes
+                self.sql_cur.execute(
+                    "UPDATE Logs SET NOTES = NOTES || ? WHERE ID = ?",
+                    (' [ABEND: {}]'.format(abend['code']), log_id)
+                )
+                self.sql_con.commit()
 
 
     def daemon(self):
@@ -2154,11 +2141,10 @@ class Gr0gu3270:
                     self.capture_mask(client_data)
                 else:
                     self.write_database_log('C', '', client_data)
-                    # PR3: Transaction correlation - detect outgoing transaction
-                    if self.transaction_tracking:
-                        txn_code = self.detect_transaction_code(client_data)
-                        if txn_code:
-                            self.start_transaction(txn_code)
+                    # PR3: Transaction correlation (always on)
+                    txn_code = self.detect_transaction_code(client_data)
+                    if txn_code:
+                        self.start_transaction(txn_code)
                 self.server.send(client_data)
 
         # Tend to server sending data
@@ -2170,8 +2156,8 @@ class Gr0gu3270:
                 self.logger.debug("Server: {}".format(self.get_ascii(self.server_data)))
                 self.handle_server(self.server_data)
                 self.refresh_aids(self.server_data)
-                # PR3: Complete pending transaction
-                if self.transaction_tracking and self.pending_transaction:
+                # PR3: Complete pending transaction (always on)
+                if self.pending_transaction:
                     self.complete_transaction(self.server_data)
 
         if self.hack_toggled: # Resend data to client when hack fields toggled

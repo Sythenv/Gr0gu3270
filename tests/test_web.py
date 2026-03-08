@@ -122,17 +122,13 @@ def test_hack_color_always_on(state):
     s = state.get_status()
     assert s['hack_color_on'] is True  # always on, no toggle
 
-def test_toggle_abend_detection(state):
-    # Enabled by default
-    r = state.toggle_abend_detection()
-    assert r['on'] is False
-    r = state.toggle_abend_detection()
-    assert r['on'] is True
+def test_abend_detection_always_on(state):
+    s = state.get_status()
+    assert s['abend_detection'] is True  # always on, no toggle
 
-def test_toggle_transaction_tracking(state):
-    # Enabled by default
-    r = state.toggle_transaction_tracking()
-    assert r['on'] is False
+def test_transaction_tracking_always_on(state):
+    s = state.get_status()
+    assert s['transaction_tracking'] is True  # always on, no toggle
 
 def test_export_csv(state):
     r = state.export_csv()
@@ -203,9 +199,16 @@ def test_http_post_hack_fields(web_server):
     status = get(web_server, '/api/status')
     assert status['hack_on'] is True
 
-def test_http_post_abend_detection(web_server):
-    data = post_json(web_server, '/api/abend_detection')
-    assert 'on' in data
+def test_http_post_abend_detection_removed(web_server):
+    # Endpoint removed — should 404
+    url = 'http://127.0.0.1:{}/api/abend_detection'.format(web_server)
+    try:
+        urllib.request.urlopen(urllib.request.Request(
+            url, data=b'{}',
+            headers={'Content-Type': 'application/json'}, method='POST'))
+        assert False, "endpoint should not exist"
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
 
 def test_http_404(web_server):
     try:
