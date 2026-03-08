@@ -19,8 +19,5 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Research sessions (local only)
-research/sessions/
-
-# Generated artifacts
-research/presentation.pdf
+# Research (local only)
+research/
