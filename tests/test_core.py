@@ -872,6 +872,53 @@ class TestFindings:
         assert len(rows) == 1
         assert rows[0][5] == 'on CECI'
 
+    def test_finding_status_default(self, h3270):
+        """New findings have STATUS='NEW' by default."""
+        h3270.emit_finding('HIGH', 'ABEND', 'test', dedup_key='status1')
+        row = h3270.all_findings()[0]
+        assert row[7] == 'NEW'
+
+    def test_get_finding_by_id(self, h3270):
+        """get_finding returns a single row by ID."""
+        h3270.emit_finding('HIGH', 'ABEND', 'test find', dedup_key='get1')
+        rows = h3270.all_findings()
+        row = h3270.get_finding(rows[0][0])
+        assert row is not None
+        assert row[5] == 'test find'
+
+    def test_update_finding_status(self, h3270):
+        """update_finding changes status in DB."""
+        h3270.emit_finding('HIGH', 'ABEND', 'update test', dedup_key='upd1')
+        fid = h3270.all_findings()[0][0]
+        ok = h3270.update_finding(fid, status='CONFIRMED')
+        assert ok is True
+        row = h3270.get_finding(fid)
+        assert row[7] == 'CONFIRMED'
+
+    def test_update_finding_invalid_status(self, h3270):
+        """update_finding rejects invalid status values."""
+        h3270.emit_finding('HIGH', 'ABEND', 'bad status', dedup_key='bad1')
+        fid = h3270.all_findings()[0][0]
+        ok = h3270.update_finding(fid, status='INVALID')
+        assert ok is False
+
+    def test_update_finding_remediation(self, h3270):
+        """update_finding stores remediation text."""
+        h3270.emit_finding('HIGH', 'ABEND', 'remed test', dedup_key='rem1')
+        fid = h3270.all_findings()[0][0]
+        h3270.update_finding(fid, remediation='Fix the COBOL program')
+        row = h3270.get_finding(fid)
+        assert row[8] == 'Fix the COBOL program'
+
+    def test_finding_classes_dict(self, h3270):
+        """FINDING_CLASSES has all 6 sources with description and remediation."""
+        from libGr0gu3270 import FINDING_CLASSES
+        expected = ['ABEND', 'SCREEN_MAP', 'AID_SCAN', 'SPOOL', 'FUZZER', 'SECURITY_AUDIT']
+        for src in expected:
+            assert src in FINDING_CLASSES, '{} missing from FINDING_CLASSES'.format(src)
+            assert 'description' in FINDING_CLASSES[src]
+            assert 'remediation' in FINDING_CLASSES[src]
+
     def test_abend_severity_mapping(self, h3270):
         """ABEND_SEVERITY maps known codes correctly."""
         from libGr0gu3270 import ABEND_SEVERITY

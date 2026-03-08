@@ -392,16 +392,16 @@ class Gr0gu3270State:
             pass
 
         self.inject_running = True
-        self.fuzz_progress = {'current': 0, 'total': len(lines), 'payload': '', 'source': ''}
+        self.fuzz_progress = {'current': 0, 'total': len(lines) + 1, 'payload': '', 'source': ''}
         self.fuzz_results = []
-        self.inject_status_msg = 'Fuzz starting ({} payloads from {})...'.format(
+        self.inject_status_msg = 'Fuzz starting ({} payloads + 1 probe from {})...'.format(
             len(lines), ', '.join(sources))
         self.inject_thread = threading.Thread(
             target=self._fuzz_worker,
             args=([field], lines, key_mode, timeout, delay, txn_code),
             daemon=True)
         self.inject_thread.start()
-        return {'ok': True, 'message': 'Fuzz started: {} payloads from {}'.format(
+        return {'ok': True, 'message': 'Fuzz started: {} payloads + 1 probe from {}'.format(
             len(lines), ', '.join(sources))}
 
     def _fuzz_worker(self, fields, lines_with_source, key_mode, timeout=1, delay=0.1, txn_code=None):
@@ -422,6 +422,116 @@ class Gr0gu3270State:
             recovery_count = 0
             consecutive_fails = 0
 
+            # --- Overflow probe: send one non-truncated payload ---
+            flen = fields[0].get('length', 0)
+            probe_len = (flen + 50) if flen > 0 else 50
+            probe_text = 'A' * probe_len
+            field_loc = 'R{},C{}'.format(fields[0]['row'], fields[0]['col'])
+
+            probe_fields = [(probe_text, fields[0]['row'], fields[0]['col'])]
+            with self.lock:
+                probe_payload = self.h.build_multi_field_payload(
+                    probe_fields, is_tn3270e, aid=aid_byte)
+                self.h.write_database_log('C', 'Fuzz: OVERFLOW-PROBE', probe_payload)
+
+            self.inject_status_msg = "Sending probe: OVERFLOW-PROBE ({} chars)".format(probe_len)
+            self.fuzz_progress['current'] = 1
+            self.fuzz_progress['payload'] = 'OVERFLOW-PROBE'
+            self.fuzz_progress['source'] = 'overflow-probe'
+
+            probe_data = self.h._aid_scan_send_and_read(probe_payload, timeout=timeout)
+            probe_status = 'NO_RESPONSE'
+            probe_abend = None
+            probe_similarity = -1
+            probe_diff = []
+
+            if probe_data:
+                with self.lock:
+                    self.h.write_database_log('S', 'Fuzz resp: OVERFLOW-PROBE', probe_data)
+                    probe_class = self.h.classify_response(probe_data)
+                    probe_similarity = self.h.screen_similarity(probe_data, ref_screen) if ref_screen else -1
+                    probe_diff = self.h.screen_diff(ref_screen, probe_data) if ref_screen else []
+                    if probe_class == 'ABEND':
+                        abends = self.h.detect_abend(probe_data)
+                        if abends:
+                            probe_abend = abends[0]['code']
+                if probe_class == 'ACCESSIBLE' and probe_similarity >= 0 and probe_similarity <= sim_threshold:
+                    probe_status = 'NAVIGATED'
+                elif probe_class == 'ACCESSIBLE':
+                    probe_status = 'SAME_SCREEN'
+                else:
+                    probe_status = probe_class
+                try:
+                    self.h.client.send(probe_data)
+                    self.h.client.flush()
+                except Exception:
+                    pass
+            else:
+                probe_status = 'NO_RESPONSE'
+
+            self.fuzz_results.append({
+                'payload': 'OVERFLOW-PROBE ({}+50 chars)'.format(flen),
+                'source': 'overflow-probe',
+                'status': probe_status,
+                'abend_code': probe_abend,
+                'size': len(probe_data) if probe_data else 0,
+                'similarity': round(probe_similarity, 3),
+                'diff': probe_diff,
+                'recovered': False,
+            })
+
+            # Emit finding if probe caused ABEND
+            if probe_abend:
+                with self.lock:
+                    self.h.emit_finding('HIGH', 'FUZZER',
+                                        'Overflow probe ({}+50 chars) caused ABEND {} on field {} — buffer overflow confirmed'.format(
+                                            flen, probe_abend, field_loc),
+                                        txn_code=txn_code,
+                                        dedup_key='FUZZER:OVERFLOW:{}:{}'.format(probe_abend, field_loc))
+
+            # Recovery after probe (same pattern as main loop)
+            if ref_screen and probe_data:
+                sim = self.h.screen_similarity(probe_data, ref_screen)
+                if sim <= sim_threshold:
+                    recovered = False
+                    for attempt in range(2):
+                        time.sleep(0.3 * (attempt + 1))
+                        if txn_code:
+                            clear_p = self.h.build_clear_payload(is_tn3270e)
+                            txn_p = self.h.build_txn_payload(txn_code, is_tn3270e)
+                            self.h._aid_scan_send_and_read(clear_p, timeout=timeout)
+                            last_resp = self.h._aid_scan_send_and_read(txn_p, timeout=timeout)
+                        else:
+                            with self.lock:
+                                self.h.aid_scan_replay_path = replay_path
+                                last_resp = self.h.aid_scan_replay()
+                        if last_resp:
+                            sim2 = self.h.screen_similarity(last_resp, ref_screen)
+                            if sim2 > sim_threshold:
+                                recovered = True
+                                recovery_count += 1
+                                try:
+                                    self.h.client.send(last_resp)
+                                    self.h.client.flush()
+                                except Exception:
+                                    pass
+                                break
+                    if not recovered:
+                        self.inject_status_msg = "Lost screen after overflow probe — recovery failed."
+                        self.inject_running = False
+                        return
+                    else:
+                        self.fuzz_results[-1]['recovered'] = True
+
+            # Reorder wordlists based on overflow signal
+            overflow_signal = (probe_abend is not None)
+            cobol = [(l, s) for l, s in lines_with_source if s == 'cobol-overflow.txt']
+            rest = [(l, s) for l, s in lines_with_source if s != 'cobol-overflow.txt']
+            if overflow_signal:
+                lines_with_source = cobol + rest    # overflow → cobol first
+            else:
+                lines_with_source = rest + cobol    # no overflow → cobol last
+
             for idx, (line, source_file) in enumerate(lines_with_source):
                 if self.shutdown_flag.is_set() or not self.inject_running:
                     break
@@ -441,8 +551,8 @@ class Gr0gu3270State:
                     self.h.write_database_log('C', 'Fuzz: ' + line, payload)
 
                 self.inject_status_msg = "Sending {}/{}: {} [{}]".format(
-                    idx + 1, len(lines_with_source), line, source_file)
-                self.fuzz_progress['current'] = idx + 1
+                    idx + 2, len(lines_with_source) + 1, line, source_file)
+                self.fuzz_progress['current'] = idx + 2
                 self.fuzz_progress['payload'] = line
                 self.fuzz_progress['source'] = source_file
 
@@ -462,9 +572,11 @@ class Gr0gu3270State:
                             abends = self.h.detect_abend(server_data)
                             if abends:
                                 abend_code = abends[0]['code']
-                    # Distinguish navigation from same-screen acceptance
+                    # Map to fuzzer-specific statuses (clearer than classify_response labels)
                     if classification == 'ACCESSIBLE' and similarity >= 0 and similarity <= sim_threshold:
                         classification = 'NAVIGATED'
+                    elif classification == 'ACCESSIBLE':
+                        classification = 'SAME_SCREEN'
                     try:
                         self.h.client.send(server_data)
                         self.h.client.flush()
@@ -613,7 +725,8 @@ class Gr0gu3270State:
             return [{'id': r[0], 'timestamp': r[1],
                      'timestamp_fmt': str(datetime.datetime.fromtimestamp(float(r[1]))),
                      'severity': r[2], 'source': r[3],
-                     'txn_code': r[4], 'message': r[5]} for r in rows]
+                     'txn_code': r[4], 'message': r[5],
+                     'status': r[7] if len(r) > 7 and r[7] else 'NEW'} for r in rows]
 
     def get_findings_summary(self):
         with self.lock:
@@ -622,6 +735,33 @@ class Gr0gu3270State:
             return {'CRIT': counts.get('CRIT', 0), 'HIGH': counts.get('HIGH', 0),
                     'MEDIUM': counts.get('MEDIUM', 0), 'INFO': counts.get('INFO', 0),
                     'total': sum(counts.values())}
+
+    def get_finding_detail(self, finding_id):
+        with self.lock:
+            from libGr0gu3270 import FINDING_CLASSES
+            row = self.h.get_finding(finding_id)
+            if not row:
+                return {'error': 'not found'}
+            cls = FINDING_CLASSES.get(row[3], {})
+            return {
+                'id': row[0], 'timestamp': row[1],
+                'timestamp_fmt': str(datetime.datetime.fromtimestamp(float(row[1]))),
+                'severity': row[2], 'source': row[3],
+                'txn_code': row[4], 'message': row[5],
+                'status': row[7] if len(row) > 7 and row[7] else 'NEW',
+                'remediation': row[8] if len(row) > 8 and row[8] else cls.get('remediation', ''),
+                'description': cls.get('description', ''),
+            }
+
+    def update_finding_detail(self, data):
+        with self.lock:
+            fid = data.get('id')
+            if not fid:
+                return {'ok': False, 'message': 'Missing id'}
+            status = data.get('status')
+            remediation = data.get('remediation')
+            ok = self.h.update_finding(fid, status=status, remediation=remediation)
+            return {'ok': ok}
 
     # ---- Macro Engine ----
 
@@ -1002,6 +1142,12 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(self.state.get_findings(since, txn))
         elif path == '/api/findings/summary':
             self._send_json(self.state.get_findings_summary())
+        elif path.startswith('/api/findings/') and path.count('/') == 3:
+            try:
+                fid = int(path.split('/')[-1])
+                self._send_json(self.state.get_finding_detail(fid))
+            except (ValueError, IndexError):
+                self._send_json({'error': 'invalid id'}, 400)
         else:
             self._send_json({'error': 'not found'}, 404)
 
@@ -1053,6 +1199,9 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(result)
         elif path == '/api/spool/poc':
             result = self.state.spool_poc_ftp(data)
+            self._send_json(result)
+        elif path == '/api/findings/update':
+            result = self.state.update_finding_detail(data)
             self._send_json(result)
         else:
             self._send_json({'error': 'not found'}, 404)
@@ -1431,7 +1580,7 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
     </div>
     <div class="panel-body">
       <table><thead><tr>
-        <th style="width:16px"></th><th>Source</th><th>TXN</th><th>Finding</th><th>Time</th>
+        <th style="width:16px"></th><th>Source</th><th>TXN</th><th>Finding</th><th>Status</th>
       </tr></thead><tbody id="findings-table"></tbody></table>
     </div>
   </div>
@@ -1507,11 +1656,16 @@ function renderFindings() {
   [...findingsData].reverse().forEach(f => {
     const tr = document.createElement('tr');
     const s = f.severity.toLowerCase();
+    const stColor = f.status==='CONFIRMED' ? 'var(--head)' : f.status==='FALSE_POSITIVE' ? 'var(--alert)' : 'var(--dim)';
+    const stLabel = f.status==='FALSE_POSITIVE' ? 'FP' : f.status||'NEW';
     tr.innerHTML = '<td><span class="sev-dot sev-'+s+'"></span></td>'
       +'<td><span class="finding-src">'+esc(f.source)+'</span></td>'
       +'<td>'+esc(f.txn_code||'')+'</td>'
       +'<td>'+esc(f.message)+'</td>'
-      +'<td>'+esc((f.timestamp_fmt||'').split(' ')[1]||'')+'</td>';
+      +'<td style="color:'+stColor+'">'+stLabel+'</td>';
+    tr.style.cursor = 'pointer';
+    if (f.status==='FALSE_POSITIVE') tr.style.opacity = '0.5';
+    tr.onclick = () => openFindingPopup(f.id);
     tbody.appendChild(tr);
   });
 }
@@ -1540,6 +1694,100 @@ function toggleFindingFilter() {
   document.getElementById('finding-txn-label').textContent = findingFilterTxn || 'ALL';
   findingSince = 0; findingsData = [];
   loadFindings();
+}
+
+// ---- Finding Popup ----
+let findingPopupId = null;
+
+async function openFindingPopup(id) {
+  const existing = document.getElementById('finding-overlay');
+  if (existing) existing.remove();
+  findingPopupId = id;
+  const f = await api('/api/findings/' + id);
+  if (f.error) { toast(f.error, 'error'); return; }
+  findingStatus = f.status || 'NEW';
+  const overlay = document.createElement('div');
+  overlay.id = 'finding-overlay';
+  overlay.className = 'fuzz-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) closeFindingPopup(); };
+  const s = f.severity.toLowerCase();
+  const statusBtns = ['NEW','CONFIRMED','FALSE_POSITIVE'].map(st => {
+    const active = f.status===st;
+    const colors = {NEW:'var(--dim)',CONFIRMED:'var(--head)',FALSE_POSITIVE:'var(--alert)'};
+    const label = st.replace(/_/g,' ');
+    return '<button class="btn" data-status="'+st+'" onclick="setFindingStatus(\''+st+'\')" style="'
+      +(active?'background:'+colors[st]+';color:var(--bg);border-color:'+colors[st]:'')
+      +'">'+label+'</button>';
+  }).join('');
+  overlay.innerHTML = `<div class="fuzz-popup" style="width:min(700px,90vw)">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <button class="btn" onclick="findingNav(-1)">\u25C0</button>
+      <h3 style="flex:1;margin:0"><span class="sev-dot sev-${s}"></span> ${esc(f.source)} #${f.id}</h3>
+      <button class="btn" onclick="findingNav(1)">\u25B6</button>
+      <button class="btn" onclick="closeFindingPopup()">\u2715</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+      <span id="finding-status-btns" style="display:flex;gap:4px">${statusBtns}</span>
+      <span style="color:var(--dim);font-size:13px">${esc(f.timestamp_fmt)}</span>
+      ${f.txn_code ? '<span class="finding-src">'+esc(f.txn_code)+'</span>' : ''}
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="color:var(--dim);font-size:12px;display:block;margin-bottom:4px">DESCRIPTION</label>
+      <div style="color:var(--text);font-size:14px;white-space:pre-wrap;background:var(--input-bg);border:1px solid var(--border);padding:8px">${esc(f.description||'No description available.')}</div>
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="color:var(--dim);font-size:12px;display:block;margin-bottom:4px">CONSTAT</label>
+      <div style="color:var(--text);font-size:14px;white-space:pre-wrap;background:var(--input-bg);border:1px solid var(--border);padding:8px">${esc(f.message)}</div>
+    </div>
+    <div style="margin-bottom:8px">
+      <label style="color:var(--dim);font-size:12px;display:block;margin-bottom:4px">REMEDIATION</label>
+      <textarea id="finding-remed" rows="4" style="width:100%;box-sizing:border-box;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:8px;font-family:inherit;font-size:14px;resize:vertical">${esc(f.remediation||'')}</textarea>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="saveFinding()">SAVE</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function closeFindingPopup() {
+  const el = document.getElementById('finding-overlay');
+  if (el) el.remove();
+  findingPopupId = null;
+}
+
+let findingStatus = 'NEW';
+
+function setFindingStatus(st) {
+  findingStatus = st;
+  const colors = {NEW:'var(--dim)',CONFIRMED:'var(--head)',FALSE_POSITIVE:'var(--alert)'};
+  document.querySelectorAll('#finding-status-btns button').forEach(btn => {
+    const s = btn.dataset.status;
+    if (s === st) { btn.style.background = colors[s]; btn.style.color = 'var(--bg)'; btn.style.borderColor = colors[s]; }
+    else { btn.style.background = ''; btn.style.color = ''; btn.style.borderColor = ''; }
+  });
+}
+
+async function saveFinding() {
+  if (!findingPopupId) return;
+  const status = findingStatus;
+  const remediation = document.getElementById('finding-remed')?.value;
+  const r = await post('/api/findings/update', {id: findingPopupId, status, remediation});
+  if (r.ok) {
+    toast('Finding updated', 'success');
+    findingSince = 0; findingsData = [];
+    loadFindings();
+  } else {
+    toast(r.message || 'Update failed', 'error');
+  }
+}
+
+function findingNav(dir) {
+  const idx = findingsData.findIndex(f => f.id === findingPopupId);
+  if (idx < 0) return;
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= findingsData.length) { toast('No more findings', 'info'); return; }
+  openFindingPopup(findingsData[newIdx].id);
 }
 
 // ---- Toast ----
@@ -1904,7 +2152,7 @@ function toggleSmapFilter() {
 }
 
 const FUZZ_STATUS_COLORS = {
-  ACCESSIBLE:'#4ec9b0',NEW_SCREEN:'#4ec9b0',NAVIGATED:'#569cd6',ABEND:'#f44',DENIED:'#f90',
+  SAME_SCREEN:'#4ec9b0',ACCESSIBLE:'#4ec9b0',NEW_SCREEN:'#4ec9b0',NAVIGATED:'#569cd6',ABEND:'#f44',DENIED:'#f90',
   NOT_FOUND:'var(--dim)',ERROR:'#f90',SAME_SCREEN:'var(--dim)',NO_RESPONSE:'#f44',UNKNOWN:'var(--dim)'
 };
 
@@ -2017,7 +2265,7 @@ function openAidScanPopup() {
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <button class="btn" id="aid-scan-btn" onclick="aidScanStart()">START</button>
       <button class="btn danger" id="aid-scan-stop-btn" onclick="aidScanStop()" style="display:none">STOP</button>
-      <input type="number" id="aid-timeout" value="1" min="0.5" max="10" step="0.5" style="width:60px;margin-left:12px"> <label style="color:var(--dim);font-size:13px">s timeout</label>
+      <input type="number" id="aid-timeout" value="1" min="0.5" max="10" step="0.5" style="width:70px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:17px;margin-left:12px"> <label style="color:var(--dim);font-size:15px">s timeout</label>
       <button class="btn" onclick="closeAidScanPopup()" style="margin-left:auto">\u2715</button>
     </div>
     <div id="aid-scan-status" style="color:var(--dim);margin-bottom:4px"></div>
@@ -2496,7 +2744,7 @@ function openFuzzPopup(field) {
     <div class="fuzz-controls">
       <button class="btn" id="fp-start" onclick="fuzzPopupStart()">START</button>
       <button class="btn danger" id="fp-stop" onclick="fuzzPopupStop()" style="display:none">STOP</button>
-      <input type="number" id="fp-timeout" value="1" min="0.5" max="10" step="0.5" style="width:60px;margin-left:12px"> <label style="color:var(--dim);font-size:13px">s timeout</label>
+      <input type="number" id="fp-timeout" value="1" min="0.5" max="10" step="0.5" style="width:70px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:17px;margin-left:12px"> <label style="color:var(--dim);font-size:15px">s timeout</label>
       <button class="btn" onclick="closeFuzzPopup()" style="margin-left:auto">\u2715</button>
     </div>
     <div id="fp-status" style="color:var(--dim);margin-bottom:4px"></div>

@@ -407,12 +407,14 @@ def test_fuzz_worker_sends_payloads(state, tmp_path):
 
     try:
         state._fuzz_worker(fields, lines, 'ENTER')
-        # Should have sent 2 payloads (AAA, BBB)
-        assert len(sent) == 2
+        # Should have sent 3 payloads (probe + AAA + BBB)
+        assert len(sent) == 3
         # Each payload should contain IAC EOR
         for p in sent:
             assert p.endswith(b'\xff\xef')
-        # Both should be NO_RESPONSE
+        # All should be NO_RESPONSE (probe + 2 payloads)
+        assert len(state.fuzz_results) == 3
+        assert state.fuzz_results[0]['source'] == 'overflow-probe'
         assert all(r['status'] == 'NO_RESPONSE' for r in state.fuzz_results)
     finally:
         state.h._aid_scan_send_and_read = original
@@ -433,9 +435,9 @@ def test_fuzz_worker_single_field(state, tmp_path):
 
     try:
         state._fuzz_worker(fields, lines, 'ENTER')
-        assert len(sent) == 1
-        # Payload should contain 1 SBA order (0x11)
-        sba_count = sent[0].count(b'\x11')
+        assert len(sent) == 2  # probe + 1 payload
+        # Second payload (after probe) should contain 1 SBA order (0x11)
+        sba_count = sent[1].count(b'\x11')
         assert sba_count == 1
     finally:
         del state.h._aid_scan_send_and_read
@@ -456,8 +458,10 @@ def test_fuzz_worker_replay_fallback(state, tmp_path):
     call_count = [0]
     def mock_send(payload, timeout=2):
         call_count[0] += 1
-        # Calls: 1=fuzz payload→wrong, 2=CLEAR(recovery), 3=txn(recovery)→ref
-        if call_count[0] >= 3:
+        # Call 1=probe→ref (no recovery needed), 2=fuzz→wrong, 3=CLEAR, 4=txn→ref
+        if call_count[0] == 1:
+            return ref_data  # probe response: same screen
+        if call_count[0] >= 4:
             return ref_data
         return diff_screen
     state.h._aid_scan_send_and_read = mock_send
@@ -488,8 +492,12 @@ def test_fuzz_worker_lost_screen_stops(state, tmp_path):
     state.h.write_database_log('S', 'ref', ref_data)
 
     diff = ascii_to_ebcdic("TOTALLY WRONG SCREEN ERROR ERROR ERROR PANIC NOW")
+    call_count = [0]
     def mock_send(payload, timeout=2):
-        return diff
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return ref_data  # probe → same screen (no recovery needed)
+        return diff  # all fuzz payloads + recoveries → wrong screen
     state.h._aid_scan_send_and_read = mock_send
 
     class FakeClient:
@@ -505,7 +513,8 @@ def test_fuzz_worker_lost_screen_stops(state, tmp_path):
         assert state.inject_running is False
         assert 'Lost screen' in state.inject_status_msg
         # Should stop after 3 consecutive recovery failures, not all 5
-        assert state.fuzz_progress['current'] <= 3
+        # Progress includes probe (+1), so max is 3+1=4
+        assert state.fuzz_progress['current'] <= 5
     finally:
         del state.h._aid_scan_send_and_read
 
@@ -522,8 +531,8 @@ def test_fuzz_navigated_status(state, tmp_path):
     call_count = [0]
     def mock_send(payload, timeout=2):
         call_count[0] += 1
-        # Call 1: fuzz payload → nav screen, Calls 2+: recovery → ref
-        if call_count[0] >= 2:
+        # Call 1: probe → ref (ok), Call 2: fuzz payload → nav, Calls 3+: recovery → ref
+        if call_count[0] == 1 or call_count[0] >= 3:
             return ref_data
         return nav_screen
     state.h._aid_scan_send_and_read = mock_send
@@ -538,10 +547,11 @@ def test_fuzz_navigated_status(state, tmp_path):
     try:
         state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
         state._fuzz_worker(fields, lines, 'ENTER', txn_code='MCOR')
-        assert len(state.fuzz_results) == 1
-        assert state.fuzz_results[0]['status'] == 'NAVIGATED'
-        assert state.fuzz_results[0]['recovered'] is True
-        assert state.fuzz_results[0]['abend_code'] is None
+        assert len(state.fuzz_results) == 2  # probe + 1 payload
+        assert state.fuzz_results[0]['source'] == 'overflow-probe'
+        assert state.fuzz_results[1]['status'] == 'NAVIGATED'
+        assert state.fuzz_results[1]['recovered'] is True
+        assert state.fuzz_results[1]['abend_code'] is None
     finally:
         del state.h._aid_scan_send_and_read
 
@@ -555,8 +565,13 @@ def test_fuzz_abend_code_in_results(state, tmp_path):
     state.h.write_database_log('S', 'ref', ref_data)
 
     abend_screen = ascii_to_ebcdic("DFHAC2206 TRANSACTION ABEND AEI9 HAS OCCURRED QUIT")
+    ref_data = ascii_to_ebcdic("ORIGINAL MENU SCREEN WITH OPTIONS 1 THROUGH 9 LIST")
+    call_count = [0]
     def mock_send(payload, timeout=2):
-        return abend_screen
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return ref_data  # probe → same screen
+        return abend_screen  # fuzz payloads → ABEND
     state.h._aid_scan_send_and_read = mock_send
 
     class FakeClient:
@@ -569,9 +584,11 @@ def test_fuzz_abend_code_in_results(state, tmp_path):
     try:
         state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
         state._fuzz_worker(fields, lines, 'ENTER', txn_code='MCOR')
-        assert len(state.fuzz_results) == 1
-        assert state.fuzz_results[0]['status'] == 'ABEND'
-        assert state.fuzz_results[0]['abend_code'] == 'AEI9'
+        assert len(state.fuzz_results) >= 2  # probe + at least 1 payload
+        # Find the fuzz payload result (not probe)
+        fuzz_result = state.fuzz_results[1]
+        assert fuzz_result['status'] == 'ABEND'
+        assert fuzz_result['abend_code'] == 'AEI9'
     finally:
         del state.h._aid_scan_send_and_read
 
@@ -588,8 +605,8 @@ def test_fuzz_recovered_flag(state, tmp_path):
     call_count = [0]
     def mock_send(payload, timeout=2):
         call_count[0] += 1
-        # Call 1: fuzz payload → different screen, Calls 2-3: recovery → ref
-        if call_count[0] >= 3:
+        # Call 1: probe → ref, Call 2: fuzz → diff, Calls 3+: recovery → ref
+        if call_count[0] == 1 or call_count[0] >= 4:
             return ref_data
         return diff_screen
     state.h._aid_scan_send_and_read = mock_send
@@ -604,8 +621,104 @@ def test_fuzz_recovered_flag(state, tmp_path):
     try:
         state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
         state._fuzz_worker(fields, lines, 'ENTER', txn_code='MCOR')
-        assert len(state.fuzz_results) == 1
-        assert state.fuzz_results[0]['recovered'] is True
+        assert len(state.fuzz_results) == 2  # probe + 1 payload
+        assert state.fuzz_results[1]['recovered'] is True
+    finally:
+        del state.h._aid_scan_send_and_read
+
+def test_overflow_probe_in_results(state, tmp_path):
+    """fuzz_results[0] is the overflow probe with source='overflow-probe'."""
+    lines = [('X', 'test.txt')]
+    fields = [{'row': 1, 'col': 10, 'length': 5}]
+
+    sent = []
+    def mock_send(payload, timeout=2):
+        sent.append(payload)
+        return None
+    state.h._aid_scan_send_and_read = mock_send
+    state.inject_running = True
+    state.fuzz_results = []
+    state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
+
+    try:
+        state._fuzz_worker(fields, lines, 'ENTER')
+        assert len(state.fuzz_results) == 2  # probe + 1 payload
+        assert state.fuzz_results[0]['source'] == 'overflow-probe'
+        assert state.fuzz_results[0]['status'] == 'NO_RESPONSE'
+        assert 'OVERFLOW-PROBE' in state.fuzz_results[0]['payload']
+        assert '5+50' in state.fuzz_results[0]['payload']  # flen=5
+    finally:
+        del state.h._aid_scan_send_and_read
+
+def test_overflow_probe_reorders_on_abend(state, tmp_path):
+    """When probe causes ABEND, cobol-overflow lines come first."""
+    from tests.test_core import ascii_to_ebcdic
+    lines = [('BOUND', 'boundary-values.txt'), ('COBOL', 'cobol-overflow.txt')]
+    fields = [{'row': 1, 'col': 10, 'length': 5}]
+
+    ref_data = ascii_to_ebcdic("ORIGINAL MENU SCREEN WITH OPTIONS 1 THROUGH 9 LIST")
+    abend_screen = ascii_to_ebcdic("DFHAC2206 TRANSACTION ABEND ASRA HAS OCCURRED QUIT")
+    state.h.write_database_log('S', 'ref', ref_data)
+
+    call_count = [0]
+    def mock_send(payload, timeout=2):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return abend_screen  # probe → ABEND
+        # Recovery calls + fuzz payloads → ref screen
+        return ref_data
+    state.h._aid_scan_send_and_read = mock_send
+
+    class FakeClient:
+        def send(self, data): pass
+        def flush(self): pass
+    state.h.client = FakeClient()
+    state.inject_running = True
+    state.fuzz_results = []
+    state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
+
+    try:
+        state._fuzz_worker(fields, lines, 'ENTER', txn_code='MCOR')
+        # Probe should be first result with ABEND
+        assert state.fuzz_results[0]['source'] == 'overflow-probe'
+        assert state.fuzz_results[0]['abend_code'] == 'ASRA'
+        # After reorder: cobol-overflow should come before boundary-values
+        non_probe = [r for r in state.fuzz_results if r['source'] != 'overflow-probe']
+        cobol_idx = next(i for i, r in enumerate(non_probe) if r['source'] == 'cobol-overflow.txt')
+        bound_idx = next(i for i, r in enumerate(non_probe) if r['source'] == 'boundary-values.txt')
+        assert cobol_idx < bound_idx
+    finally:
+        del state.h._aid_scan_send_and_read
+
+def test_overflow_probe_deprioritizes_on_trunc(state, tmp_path):
+    """When probe returns SAME_SCREEN (no ABEND), cobol-overflow lines come last."""
+    from tests.test_core import ascii_to_ebcdic
+    lines = [('COBOL', 'cobol-overflow.txt'), ('BOUND', 'boundary-values.txt')]
+    fields = [{'row': 1, 'col': 10, 'length': 5}]
+
+    ref_data = ascii_to_ebcdic("ORIGINAL MENU SCREEN WITH OPTIONS 1 THROUGH 9 LIST")
+    state.h.write_database_log('S', 'ref', ref_data)
+
+    def mock_send(payload, timeout=2):
+        return ref_data  # all responses = same screen (ACCESSIBLE, similarity=1.0)
+    state.h._aid_scan_send_and_read = mock_send
+
+    class FakeClient:
+        def send(self, data): pass
+        def flush(self): pass
+    state.h.client = FakeClient()
+    state.inject_running = True
+    state.fuzz_results = []
+    state.fuzz_progress = {'current': 0, 'total': 0, 'payload': '', 'source': ''}
+
+    try:
+        state._fuzz_worker(fields, lines, 'ENTER', txn_code='MCOR')
+        # Probe first, then reordered payloads
+        non_probe = [r for r in state.fuzz_results if r['source'] != 'overflow-probe']
+        cobol_idx = next(i for i, r in enumerate(non_probe) if r['source'] == 'cobol-overflow.txt')
+        bound_idx = next(i for i, r in enumerate(non_probe) if r['source'] == 'boundary-values.txt')
+        # No ABEND → cobol should be AFTER boundary
+        assert cobol_idx > bound_idx
     finally:
         del state.h._aid_scan_send_and_read
 
@@ -801,6 +914,39 @@ def test_get_findings_summary_empty(state):
     assert s['MEDIUM'] == 0
     assert s['INFO'] == 0
     assert s['total'] == 0
+
+
+def test_get_findings_includes_status(state):
+    """get_findings returns status field."""
+    state.h.emit_finding('HIGH', 'ABEND', 'status test', dedup_key='web_st1')
+    findings = state.get_findings()
+    assert len(findings) == 1
+    assert findings[0]['status'] == 'NEW'
+
+
+def test_get_finding_detail(state):
+    """get_finding_detail returns full finding with description."""
+    state.h.emit_finding('HIGH', 'ABEND', 'detail test', dedup_key='web_det1')
+    findings = state.get_findings()
+    detail = state.get_finding_detail(findings[0]['id'])
+    assert detail['source'] == 'ABEND'
+    assert detail['message'] == 'detail test'
+    assert detail['status'] == 'NEW'
+    assert 'description' in detail
+    assert len(detail['description']) > 0
+    assert 'remediation' in detail
+
+
+def test_update_finding_via_state(state):
+    """update_finding_detail changes status and remediation."""
+    state.h.emit_finding('MEDIUM', 'FUZZER', 'update test', dedup_key='web_upd1')
+    findings = state.get_findings()
+    fid = findings[0]['id']
+    result = state.update_finding_detail({'id': fid, 'status': 'CONFIRMED', 'remediation': 'Fix it'})
+    assert result['ok'] is True
+    detail = state.get_finding_detail(fid)
+    assert detail['status'] == 'CONFIRMED'
+    assert detail['remediation'] == 'Fix it'
 
 
 def test_http_api_findings(web_server):

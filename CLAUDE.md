@@ -37,7 +37,7 @@ python3 Gr0gu3270.py -t 10.10.10.10 3270                # TLS
 python3 Gr0gu3270.py --web-port 1337 10.10.10.10 3270   # web port custom
 python3 Gr0gu3270.py -o                                 # offline (analyse depuis DB)
 python3 Gr0gu3270.py --macro dvca-login.json 10.10.10.10 3270  # auto-run macro on connect
-python3 -m pytest tests/ -v                            # tests unitaires (151 tests)
+python3 -m pytest tests/ -v                            # tests unitaires (171 tests)
 ```
 
 Python 3.11+. Zero dependance externe.
@@ -46,7 +46,7 @@ Python 3.11+. Zero dependance externe.
 
 - `Gr0gu3270.py` — CLI entry point (74 lignes)
 - `libGr0gu3270.py` — Core library (~2550 lignes) : protocole 3270, EBCDIC, injection, ABEND detection, screen map, transactions, security classification, AID scan, SPOOL/RCE, macro engine, Findings, SQLite
-- `web.py` — Web UI (~2660 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 31 endpoints API, Findings panel, 8 accordion tabs
+- `web.py` — Web UI (~2700 lignes) : HTTP server, SPA HTML/JS embarquee, thread-safe state wrapper, 31 endpoints API, Findings panel, 6 accordion tabs + AID Scan/Fuzz popups
 
 ### Data Flow
 
@@ -86,7 +86,7 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 
 - `injections/` — 4 wordlists fuzzing (boundary-values, cobol-overflow, db2-injections, hidden-tampering) — auto-selected by field type
 - `macros/` — Macro JSON files for automated navigation (dvca-login.json)
-- `tests/` — 151 tests unitaires pytest (test_core.py + test_web.py)
+- `tests/` — 171 tests unitaires pytest (test_core.py + test_web.py)
 - `research/` — Journal, findings, knowledge base, post-mortems
 - `framework/` — Template CLAUDE.md + script init-research.sh
 - `docs/` — Documentation humaine (STAKEHOLDERS.md)

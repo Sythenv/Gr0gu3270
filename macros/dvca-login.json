@@ -6,6 +6,7 @@
     {"action": "SEND", "text": "DVCA", "aid": "ENTER"},
     {"action": "AID", "key": "PF5"},
     {"action": "CLEAR"},
+    {"action": "CLEAR"},
     {"action": "CLEAR"}
   ]
 }

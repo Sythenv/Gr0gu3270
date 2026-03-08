@@ -63,6 +63,65 @@ ABEND_CODES = {
 }
 
 # ABEND severity mapping for Findings
+FINDING_CLASSES = {
+    'ABEND': {
+        'description': 'An application ABEND (abnormal end) was triggered during interaction. '
+                       'ABENDs reveal internal program failures — buffer overflows (ASRA/ASRB), '
+                       'program-not-found (APCT), or resource deadlocks (AICA). They expose '
+                       'error handling weaknesses and can leak program names, memory layouts, '
+                       'and internal transaction flow.',
+        'remediation': 'Implement proper HANDLE ABEND in CICS programs. Review the failing '
+                       'program for unchecked input lengths (MOVE into PIC X fields), missing '
+                       'RESP checks on CICS commands, and arithmetic overflows on COMP fields. '
+                       'Ensure ABEND messages do not disclose sensitive internal details.',
+    },
+    'SCREEN_MAP': {
+        'description': 'A hidden field (non-display attribute) was detected on the screen. '
+                       'Hidden fields often carry session tokens, authorization flags, user '
+                       'roles, or pricing data that the application assumes cannot be modified. '
+                       'A TN3270 proxy allows reading and tampering with these values.',
+        'remediation': 'Never rely on hidden fields for security-critical data. Validate all '
+                       'input server-side. Move sensitive state to COMMAREA, CICS containers, '
+                       'or TS queues rather than screen fields.',
+    },
+    'AID_SCAN': {
+        'description': 'An AID key (PF/PA/ENTER) produced an unexpected result on the current '
+                       'screen — either a security violation, an unmapped navigation path, or '
+                       'an application error. This reveals undocumented functions, debug screens, '
+                       'or access control gaps in the transaction.',
+        'remediation': 'Restrict AID key handling to documented keys only. Use HANDLE AID in '
+                       'CICS programs to explicitly process or reject each key. Disable debug '
+                       'and admin functions in production regions.',
+    },
+    'SPOOL': {
+        'description': 'The JES SPOOL interface is accessible from this CICS region. SPOOL '
+                       'access allows reading print output from other users and, if INTRDR '
+                       '(internal reader) is open, submitting JCL for execution — effectively '
+                       'achieving remote code execution on the mainframe.',
+        'remediation': 'Restrict SPOOL and INTRDR access via ESM rules (RACF FACILITY class). '
+                       'Disable SPOOLOPEN/SPOOLWRITE commands in production CICS regions. '
+                       'Audit CICS SIT parameters related to spool access.',
+    },
+    'FUZZER': {
+        'description': 'Field fuzzing produced an unexpected application response — a new '
+                       'screen, an ABEND, a security violation, or a navigated state change. '
+                       'This indicates the application does not properly validate input for '
+                       'this field, which may be exploitable.',
+        'remediation': 'Add server-side input validation for field length, type, and range. '
+                       'Use PIC clauses and CICS BMS validation to enforce constraints. '
+                       'Test with boundary values and unexpected character sets.',
+    },
+    'SECURITY_AUDIT': {
+        'description': 'A security violation was detected by the External Security Manager '
+                       '(RACF, ACF2, or Top Secret). This indicates the current user lacks '
+                       'authorization for the requested resource or transaction. The violation '
+                       'pattern reveals which ESM is in use and how access control is configured.',
+        'remediation': 'Review ESM rules for the affected resource. Ensure least-privilege '
+                       'access is enforced. Audit CICS resource definitions (TCT, PCT, PPT) '
+                       'for overly permissive settings.',
+    },
+}
+
 ABEND_SEVERITY = {
     'ASRA': 'CRIT', 'ASRB': 'CRIT', 'AICA': 'HIGH',
     'AEY7': 'HIGH', 'AEYF': 'HIGH', 'AEZD': 'HIGH',
@@ -559,9 +618,20 @@ class Gr0gu3270:
                             SOURCE TEXT,
                             TXN_CODE TEXT,
                             MESSAGE TEXT,
-                            DEDUP_KEY TEXT UNIQUE)
+                            DEDUP_KEY TEXT UNIQUE,
+                            STATUS TEXT DEFAULT 'NEW',
+                            REMEDIATION TEXT)
                             """)
             self.sql_con.commit()
+        else:
+            # Migrate: add STATUS and REMEDIATION if missing
+            cols = [r[1] for r in self.sql_cur.execute("PRAGMA table_info(Findings)").fetchall()]
+            if 'STATUS' not in cols:
+                self.sql_cur.execute("ALTER TABLE Findings ADD COLUMN STATUS TEXT DEFAULT 'NEW'")
+                self.sql_con.commit()
+            if 'REMEDIATION' not in cols:
+                self.sql_cur.execute("ALTER TABLE Findings ADD COLUMN REMEDIATION TEXT")
+                self.sql_con.commit()
 
     def write_database_log(self, direction, notes, data):
 
@@ -598,7 +668,7 @@ class Gr0gu3270:
         self.logger.debug("Start: {}".format(start))
         if start > 0 :
             self.logger.debug("Getting all records starting at {}".format(start))
-            self.sql_cur.execute("SELECT * FROM Logs WHERE ID > {}".format(start))
+            self.sql_cur.execute("SELECT * FROM Logs WHERE ID > ?", (start,))
         else:
             self.logger.debug("Getting all records from database")
             self.sql_cur.execute("SELECT * FROM Logs")
@@ -941,7 +1011,7 @@ class Gr0gu3270:
     def all_abends(self, start=0):
         '''Gets all abend records from database'''
         if start > 0:
-            self.sql_cur.execute("SELECT * FROM Abends WHERE ID > {}".format(start))
+            self.sql_cur.execute("SELECT * FROM Abends WHERE ID > ?", (start,))
         else:
             self.sql_cur.execute("SELECT * FROM Abends")
         return self.sql_cur.fetchall()
@@ -968,6 +1038,22 @@ class Gr0gu3270:
         else:
             self.sql_cur.execute("SELECT * FROM Findings WHERE ID > ? ORDER BY ID", (start,))
         return self.sql_cur.fetchall()
+
+    def get_finding(self, finding_id):
+        '''Get a single finding by ID.'''
+        self.sql_cur.execute("SELECT * FROM Findings WHERE ID = ?", (finding_id,))
+        return self.sql_cur.fetchone()
+
+    def update_finding(self, finding_id, status=None, remediation=None):
+        '''Update finding status and/or remediation.'''
+        if status is not None:
+            if status not in ('NEW', 'CONFIRMED', 'FALSE_POSITIVE'):
+                return False
+            self.sql_cur.execute("UPDATE Findings SET STATUS = ? WHERE ID = ?", (status, finding_id))
+        if remediation is not None:
+            self.sql_cur.execute("UPDATE Findings SET REMEDIATION = ? WHERE ID = ?", (remediation, finding_id))
+        self.sql_con.commit()
+        return True
 
     # ---- PR2: Screen Map Parsing Methods ----
 
@@ -1281,7 +1367,7 @@ class Gr0gu3270:
     def all_transactions(self, start=0):
         '''Gets all transaction records from database'''
         if start > 0:
-            self.sql_cur.execute("SELECT * FROM Transactions WHERE ID > {}".format(start))
+            self.sql_cur.execute("SELECT * FROM Transactions WHERE ID > ?", (start,))
         else:
             self.sql_cur.execute("SELECT * FROM Transactions")
         return self.sql_cur.fetchall()
@@ -2113,9 +2199,6 @@ class Gr0gu3270:
                     )
                     self.sql_con.commit()
 
-            # PR4: Security audit response processing
-            if self.audit_running and self.audit_current_txn:
-                self.audit_process_response(server_data)
 
     def daemon(self):
 
