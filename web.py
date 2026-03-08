@@ -1232,26 +1232,11 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 .sev-info { background:var(--dim); }
 .finding-src { font-size:11px; font-weight:bold; padding:1px 4px; background:var(--border); color:var(--text); }
 
-/* Accordion tool bar */
-/* Toolbar (top groups) */
-.toolbar-btn { background: var(--bg); color: var(--dim); border: none; border-right: 1px solid var(--border); padding: 5px 14px; font-family: inherit; font-size: 17px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; transition: all 0.15s; }
-.toolbar-btn:hover { color: var(--text); }
-.toolbar-btn.active { background: var(--head); color: var(--bg); text-shadow: none; }
-.toolbar-panel { flex-shrink: 0; display: none; border-bottom: 1px solid var(--border); }
-.toolbar-panel.open { display: block; }
-.toolbar-panel .accordion-tabs { border-bottom: 1px solid var(--border); }
-
-/* Bottom accordion (GUIDE) */
-.action-bar { flex-shrink: 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; max-height: 50vh; scrollbar-width: none; }
-.action-bar::-webkit-scrollbar { display: none; }
-.accordion-group { border-bottom: 1px solid var(--border); }
-.accordion-header { display: flex; align-items: center; gap: 8px; padding: 5px 10px; background: var(--bg); color: var(--text); cursor: pointer; font-size: 18px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; border: none; width: 100%; text-align: left; font-family: inherit; user-select: none; }
-.accordion-header:hover { background: #0f1a0f; }
-.accordion-header .arrow { color: var(--dim); font-size: 15px; transition: transform 0.15s; }
-.accordion-header.open .arrow { transform: rotate(90deg); }
-.accordion-header.open { background: var(--head); color: var(--bg); text-shadow: none; }
-.accordion-body { display: none; border-top: 1px solid var(--border); }
-.accordion-body.open { display: block; }
+/* Tool footer bar */
+.tool-footer { flex-shrink:0; display:flex; gap:0; border-top:1px solid var(--border); }
+.tool-footer button { background:var(--bg); color:var(--dim); border:none; border-right:1px solid var(--border); padding:5px 14px; font-family:inherit; font-size:17px; font-weight:bold; text-transform:uppercase; letter-spacing:0.5px; cursor:pointer; transition:all 0.15s; }
+.tool-footer button:hover { color:var(--text); }
+.tool-footer button.active { background:var(--head); color:var(--bg); text-shadow:none; }
 .accordion-tabs { display: flex; background: var(--bg); border-bottom: 1px solid var(--border); }
 .accordion-tabs button { background: transparent; color: var(--dim); border: none; padding: 4px 10px; cursor: pointer; font-family: inherit; font-size: 15px; text-transform: uppercase; transition: all 0.15s; }
 .accordion-tabs button:hover { color: var(--text); }
@@ -1261,7 +1246,7 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 .action-panel.tall { max-height: min(55vh, calc(100vh - 160px)); }
 .action-panel.active { display: block; }
 
-/* Hide old tab bar — we use accordion now */
+/* Hide old tab bar */
 .action-tabs { display: none; }
 
 /* Shared styles */
@@ -1430,7 +1415,6 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
     </div>
   </div>
 </div>
-<div class="toolbar-panel" id="toolbar-panel"></div>
 
 <!-- MAIN: vertical stack -->
 <div class="main">
@@ -1469,14 +1453,14 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
   </div>
 </div>
 
-<!-- TOOL ACCORDION -->
-<div class="action-bar" id="tool-accordion"></div>
-
-<!-- Hidden legacy containers for buildActionBar compat -->
+<!-- Hidden legacy containers for buildActionPanels compat -->
 <div style="display:none">
   <div id="action-tabs"></div>
   <div id="action-panels"></div>
 </div>
+
+<!-- TOOL FOOTER -->
+<div class="tool-footer" id="tool-footer"></div>
 
 <!-- OIA BAR -->
 <div class="oia-bar">
@@ -1502,9 +1486,9 @@ const ACTIONS = [
 ];
 
 const GROUPS = [
-  {id:'grp-hacks', label:'HACKS', items:['hack-fields','hack-color','inject-keys'], location:'top'},
-  {id:'grp-system', label:'SYSTEM', items:['spool'], location:'top'},
-  {id:'grp-data', label:'DATA', items:['logs','statistics'], location:'top'},
+  {id:'grp-hacks', label:'HACKS', items:['hack-fields','hack-color','inject-keys']},
+  {id:'grp-system', label:'SYSTEM', items:['spool']},
+  {id:'grp-data', label:'DATA', items:['logs','statistics']},
 ];
 
 let activeAction = null;
@@ -1600,160 +1584,88 @@ async function post(path, data={}) {
   } catch(e) { toast('API: ' + e.message, 'error'); throw e; }
 }
 
-// ---- Build toolbar + accordion ----
+// ---- Build footer + popups ----
 function buildActionBar() {
-  const toolbar = document.getElementById('toolbar');
-  const tbPanel = document.getElementById('toolbar-panel');
-  const acc = document.getElementById('tool-accordion');
-  // Also create hidden legacy panels for buildActionPanels compat
+  // Create hidden legacy panels for buildActionPanels compat
   const legacyPanels = document.getElementById('action-panels');
   ACTIONS.forEach(a => {
     const panel = document.createElement('div');
     panel.className = 'action-panel' + (a.tall ? ' tall' : '');
     panel.id = 'apanel-' + a.id;
     legacyPanels.appendChild(panel);
-    const btn = document.createElement('button');
-    btn.id = 'atab-btn-' + a.id;
-    btn.style.display = 'none';
-    legacyPanels.appendChild(btn);
   });
 
+  // Build footer buttons
+  const footer = document.getElementById('tool-footer');
   GROUPS.forEach(g => {
-    if (g.location === 'top') {
-      // Toolbar button
-      const btn = document.createElement('button');
-      btn.className = 'toolbar-btn';
-      btn.id = 'tb-' + g.id;
-      btn.textContent = g.label;
-      btn.onclick = () => toggleGroup(g.id);
-      toolbar.appendChild(btn);
-      // Panel content inside shared toolbar-panel
-      const wrapper = document.createElement('div');
-      wrapper.id = g.id + '-wrapper';
-      wrapper.style.display = 'none';
-      if (g.items.length > 1) {
-        const tabs = document.createElement('div');
-        tabs.className = 'accordion-tabs';
-        tabs.id = g.id + '-tabs';
-        g.items.forEach(aid => {
-          const a = ACTIONS.find(x => x.id === aid);
-          const tb = document.createElement('button');
-          tb.textContent = a.label;
-          tb.id = 'subtab-' + aid;
-          tb.onclick = () => showTool(g.id, aid);
-          tabs.appendChild(tb);
-        });
-        wrapper.appendChild(tabs);
-      }
-      const pc = document.createElement('div');
-      pc.id = g.id + '-panels';
-      g.items.forEach(aid => {
-        const a = ACTIONS.find(x => x.id === aid);
-        const p = document.createElement('div');
-        p.className = 'action-panel' + (a.tall ? ' tall' : '');
-        p.id = 'acc-panel-' + aid;
-        pc.appendChild(p);
-      });
-      wrapper.appendChild(pc);
-      tbPanel.appendChild(wrapper);
-    } else {
-      // Bottom accordion (GUIDE)
-      const group = document.createElement('div');
-      group.className = 'accordion-group';
-      group.id = g.id;
-      const hdr = document.createElement('button');
-      hdr.className = 'accordion-header';
-      hdr.innerHTML = '<span class="arrow">&#9654;</span> ' + g.label;
-      hdr.onclick = () => toggleGroup(g.id);
-      group.appendChild(hdr);
-      const body = document.createElement('div');
-      body.className = 'accordion-body';
-      body.id = g.id + '-body';
-      if (g.items.length > 1) {
-        const tabs = document.createElement('div');
-        tabs.className = 'accordion-tabs';
-        tabs.id = g.id + '-tabs';
-        g.items.forEach(aid => {
-          const a = ACTIONS.find(x => x.id === aid);
-          const tb = document.createElement('button');
-          tb.textContent = a.label;
-          tb.id = 'subtab-' + aid;
-          tb.onclick = (e) => { e.stopPropagation(); showTool(g.id, aid); };
-          tabs.appendChild(tb);
-        });
-        body.appendChild(tabs);
-      }
-      const pc = document.createElement('div');
-      pc.id = g.id + '-panels';
-      g.items.forEach(aid => {
-        const a = ACTIONS.find(x => x.id === aid);
-        const p = document.createElement('div');
-        p.className = 'action-panel' + (a.tall ? ' tall' : '');
-        p.id = 'acc-panel-' + aid;
-        pc.appendChild(p);
-      });
-      body.appendChild(pc);
-      group.appendChild(body);
-      acc.appendChild(group);
-    }
+    const btn = document.createElement('button');
+    btn.id = 'ft-' + g.id;
+    btn.textContent = g.label;
+    btn.onclick = () => openToolPopup(g.id);
+    footer.appendChild(btn);
   });
+
   buildActionPanels();
-  ACTIONS.forEach(a => {
-    const src = document.getElementById('apanel-' + a.id);
-    const dst = document.getElementById('acc-panel-' + a.id);
-    if (src && dst) { dst.innerHTML = src.innerHTML; }
+}
+
+function openToolPopup(gid) {
+  closeToolPopup();
+  const g = GROUPS.find(x => x.id === gid);
+  if (!g) return;
+  // Highlight footer button
+  document.querySelectorAll('.tool-footer button').forEach(b => b.classList.remove('active'));
+  document.getElementById('ft-' + gid).classList.add('active');
+
+  const overlay = document.createElement('div');
+  overlay.id = 'tool-popup-overlay';
+  overlay.className = 'fuzz-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) closeToolPopup(); };
+
+  // Build inner HTML: tabs (if >1 item) + panels
+  let tabsHtml = '';
+  if (g.items.length > 1) {
+    tabsHtml = '<div class="accordion-tabs" style="margin-bottom:8px">';
+    g.items.forEach((aid, i) => {
+      const a = ACTIONS.find(x => x.id === aid);
+      tabsHtml += '<button id="subtab-' + aid + '" class="' + (i===0?'active':'') + '" onclick="showToolInPopup(\'' + gid + '\',\'' + aid + '\')">' + a.label + '</button>';
+    });
+    tabsHtml += '</div>';
+  }
+  let panelsHtml = '';
+  g.items.forEach((aid, i) => {
+    const a = ACTIONS.find(x => x.id === aid);
+    const src = document.getElementById('apanel-' + aid);
+    const cls = (a && a.tall) ? ' tall' : '';
+    panelsHtml += '<div id="acc-panel-' + aid + '" class="action-panel' + cls + (i===0?' active':'') + '">' + (src ? src.innerHTML : '') + '</div>';
   });
-}
 
-function toggleGroup(gid) {
-  const g = GROUPS.find(x => x.id === gid);
-  if (!g) return;
-  const isTop = g.location === 'top';
-  const tbPanel = document.getElementById('toolbar-panel');
+  overlay.innerHTML = '<div class="fuzz-popup" style="width:min(800px,90vw)">' +
+    '<div style="display:flex;align-items:center;margin-bottom:8px">' +
+    '<h3 style="flex:1">' + g.label + '</h3>' +
+    '<button class="btn" onclick="closeToolPopup()">\u00d7</button>' +
+    '</div>' +
+    tabsHtml +
+    panelsHtml +
+    '</div>';
+  document.body.appendChild(overlay);
 
-  if (activeGroup === gid) {
-    // Close
-    if (isTop) {
-      document.getElementById('tb-' + gid).classList.remove('active');
-      document.getElementById(gid + '-wrapper').style.display = 'none';
-      tbPanel.classList.remove('open');
-    } else {
-      document.querySelector('#' + gid + ' .accordion-header').classList.remove('open');
-      document.getElementById(gid + '-body').classList.remove('open');
-    }
-    activeGroup = null;
-    activeAction = null;
-    stopActionPollers();
-    return;
-  }
-  // Close previous
-  if (activeGroup) {
-    const prev = GROUPS.find(x => x.id === activeGroup);
-    if (prev && prev.location === 'top') {
-      document.getElementById('tb-' + prev.id).classList.remove('active');
-      document.getElementById(prev.id + '-wrapper').style.display = 'none';
-    } else if (prev) {
-      document.querySelector('#' + prev.id + ' .accordion-header').classList.remove('open');
-      document.getElementById(prev.id + '-body').classList.remove('open');
-    }
-  }
-  // Open this
-  if (isTop) {
-    document.getElementById('tb-' + gid).classList.add('active');
-    document.getElementById(gid + '-wrapper').style.display = 'block';
-    tbPanel.classList.add('open');
-  } else {
-    document.querySelector('#' + gid + ' .accordion-header').classList.add('open');
-    document.getElementById(gid + '-body').classList.add('open');
-  }
   activeGroup = gid;
-  showTool(gid, g.items[0]);
+  activeAction = g.items[0];
+  startActionPollers(g.items[0]);
 }
 
-function showTool(gid, aid) {
+function closeToolPopup() {
+  stopActionPollers();
+  const el = document.getElementById('tool-popup-overlay');
+  if (el) el.remove();
+  document.querySelectorAll('.tool-footer button').forEach(b => b.classList.remove('active'));
+  activeGroup = null;
+  activeAction = null;
+}
+
+function showToolInPopup(gid, aid) {
   const g = GROUPS.find(x => x.id === gid);
   if (!g) return;
-  // Update sub-tabs
   g.items.forEach(id => {
     const tb = document.getElementById('subtab-' + id);
     if (tb) tb.className = id === aid ? 'active' : '';
@@ -1769,11 +1681,11 @@ function showTool(gid, aid) {
 }
 
 function toggleAction(id) {
-  // Legacy compat — find group and open it
+  // Legacy compat — find group and open it as popup
   const g = GROUPS.find(gr => gr.items.includes(id));
   if (!g) return;
-  if (activeGroup !== g.id) toggleGroup(g.id);
-  showTool(g.id, id);
+  openToolPopup(g.id);
+  showToolInPopup(g.id, id);
 }
 
 function stopActionPollers() {
