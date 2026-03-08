@@ -119,16 +119,17 @@ def test_set_hack_fields(state):
     assert s['hack_on'] is True
 
 def test_hack_color_always_on(state):
-    s = state.get_status()
-    assert s['hack_color_on'] is True  # always on, no toggle
+    # Hack Color is always on — no status field needed, verify color flags are True
+    assert state.h.hack_color_sfe is True
+    assert state.h.hack_color_hv is True
 
 def test_abend_detection_always_on(state):
-    s = state.get_status()
-    assert s['abend_detection'] is True  # always on, no toggle
+    # Always on — no toggle, no status field
+    assert state.h.abend_detection is True
 
 def test_transaction_tracking_always_on(state):
-    s = state.get_status()
-    assert s['transaction_tracking'] is True  # always on, no toggle
+    # Always on — no toggle, no status field
+    assert state.h.transaction_tracking is True
 
 def test_export_csv(state):
     r = state.export_csv()

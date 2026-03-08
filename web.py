@@ -122,7 +122,6 @@ class Gr0gu3270State:
         self.inject_running = False
         self.inject_status_msg = "Not Ready."
         self.inject_thread = None
-        self.disabled_tabs = []
         self.shutdown_flag = threading.Event()
         self.connection_ready = threading.Event()
         self.aid_scan_thread = None
@@ -143,11 +142,7 @@ class Gr0gu3270State:
                 'connected': self.connection_ready.is_set(),
                 'offline': self.h.is_offline(),
                 'hack_on': bool(self.h.hack_on),
-                'hack_color_on': True,  # always on
-                'abend_detection': True,  # always on
-                'transaction_tracking': True,  # always on
                 'aid_scan_running': bool(self.h.aid_scan_running),
-                'disabled_tabs': self.disabled_tabs,
                 'version': libGr0gu3270.__version__,
                 'project_name': self.h.project_name,
             }
@@ -1405,21 +1400,10 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 .stat-row { display: flex; gap: 8px; padding: 3px 0; font-size: 18px; }
 .stat-label { color: var(--dim); min-width: 180px; }
 .stat-value { color: var(--text); }
-.status-accessible { background: rgba(0,108,77,0.15); }
-.status-denied { background: rgba(255,21,31,0.1); }
-.status-abend { background: rgba(255,21,31,0.06); }
-.status-not_found { background: rgba(0,77,64,0.1); }
-.status-error { background: rgba(255,21,31,0.08); }
 .summary-bar { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 10px; background: var(--input-bg); border: 1px solid var(--border); margin-bottom: 6px; font-size: 17px; }
 .summary-bar span { display: flex; align-items: center; gap: 3px; }
 .dot { width: 8px; height: 8px; display: inline-block; }
-.dot-accessible { background: var(--text); }
-.dot-denied { background: var(--alert); }
-.dot-abend { background: var(--alert); opacity: 0.6; }
-.dot-not_found { background: var(--dim); }
-.dot-error { background: var(--alert); opacity: 0.4; }
 .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 2px; }
-.inject-status { padding: 6px 10px; background: var(--input-bg); border: 1px solid var(--border); margin-top: 4px; font-size: 17px; min-height: 24px; }
 .help-content { background: var(--input-bg); border: 1px solid var(--border); padding: 12px; white-space: pre-wrap; line-height: 1.5; font-size: 17px; }
 
 /* Screen map: highlight hidden/protected */
@@ -1592,7 +1576,6 @@ const GROUPS = [
 let activeAction = null;
 let activeGroup = null;
 let pollers = {};
-let disabledTabs = [];
 let logSince = 0, abendSince = 0, txnSince = 0;
 
 // ---- Findings data layer ----
@@ -1877,14 +1860,6 @@ function showToolInPopup(gid, aid) {
   startActionPollers(aid);
 }
 
-function toggleAction(id) {
-  // Legacy compat — find group and open it as popup
-  const g = GROUPS.find(gr => gr.items.includes(id));
-  if (!g) return;
-  openToolPopup(g.id);
-  showToolInPopup(g.id, id);
-}
-
 function stopActionPollers() {
   if (pollers.aids) { clearInterval(pollers.aids); delete pollers.aids; }
   if (pollers.actionLogs) { clearInterval(pollers.actionLogs); delete pollers.actionLogs; }
@@ -2002,7 +1977,6 @@ async function pollStatus() {
     document.getElementById('oia-version').textContent = 'v' + (s.version || '');
     document.getElementById('oia-target').textContent = (s.server_ip || '') + (s.server_port ? ':'+s.server_port : '');
 
-    disabledTabs = s.disabled_tabs || [];
 
     // Update header toggle pills
     const hackPill = document.getElementById('tgl-hack');
@@ -2160,13 +2134,6 @@ async function loadAids() {
 }
 
 // ---- Badge helper ----
-function updateBadge(name, count) {
-  const el = document.getElementById('badge-' + name);
-  if (!el) return;
-  el.textContent = count > 99 ? '99+' : count;
-  el.className = count > 0 ? 'badge' : 'badge zero';
-}
-
 // ---- Actions ----
 async function toggleHackFields() {
   const pill = document.getElementById('tgl-hack');
@@ -2485,22 +2452,6 @@ const METHOD_DATA = {
 };
 
 let activePhase = 'recon';
-
-function buildMethodology() {
-  const root = document.getElementById('method-root');
-  if (!root) return;
-  // Build phase navigation bar
-  let h = '<div class="method-phases">';
-  const phases = Object.keys(METHOD_DATA);
-  phases.forEach((pid, i) => {
-    if (i > 0) h += '<span class="method-arrow">&#9654;</span>';
-    h += '<div class="method-phase' + (pid === activePhase ? ' active' : '') + '" onclick="showPhase(\''+pid+'\')">' + esc(METHOD_DATA[pid].label) + '</div>';
-  });
-  h += '</div>';
-  h += '<div id="method-content-area"></div>';
-  root.innerHTML = h;
-  renderPhaseContent();
-}
 
 function showPhase(pid) {
   activePhase = pid;

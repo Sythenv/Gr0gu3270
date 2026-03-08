@@ -37,7 +37,7 @@ python3 Gr0gu3270.py -t 10.10.10.10 3270                # TLS
 python3 Gr0gu3270.py --web-port 1337 10.10.10.10 3270   # web port custom
 python3 Gr0gu3270.py -o                                 # offline (analyse depuis DB)
 python3 Gr0gu3270.py --macro dvca-login.json 10.10.10.10 3270  # auto-run macro on connect
-python3 -m pytest tests/ -v                            # tests unitaires (171 tests)
+python3 -m pytest tests/ -v                            # tests unitaires (170 tests)
 ```
 
 Python 3.11+. Zero dependance externe.
@@ -73,7 +73,7 @@ TN3270 Emulator <-> Local Proxy (Gr0gu3270) <-> TN3270 Server (Mainframe)
 - SPOOL/RCE : `spool_check()` / `spool_poc_ftp()` — detection passive + PoC actif via INTRDR.
 - Macro engine : `parse_macro()` / `validate_macro_step()` / `build_macro_step_payload()` (pure) + `macro_run()` / `_macro_worker()` / `_macro_wait()` (web.py I/O).
 - Findings : `emit_finding()` / `all_findings()` — deduplicated security findings with severity, source, txn context.
-- DB schema : 8 tables — Config, Logs, Abends, Transactions, Audit, ScanResults, AidScan, Findings.
+- DB schema : 6 tables — Config, Logs, Abends, Transactions, AidScan, Findings.
 
 ### Conventions
 

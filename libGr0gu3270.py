@@ -175,17 +175,6 @@ SECURITY_VIOLATION_PATTERNS = [
     'RESOURCE NOT AUTHORIZED',
 ]
 
-# Audit result status codes
-AUDIT_STATUS = {
-    'ACCESSIBLE': 'Transaction executed successfully',
-    'DENIED': 'Security violation detected',
-    'ABEND': 'Transaction caused an ABEND',
-    'NOT_FOUND': 'Transaction not defined',
-    'ERROR': 'CICS error returned',
-    'UNKNOWN': 'Response could not be classified',
-    'SPOOL_OPEN': 'SPOOL API is accessible — RCE possible via INTRDR',
-    'SPOOL_CLOSED': 'SPOOL API not available or not authorized',
-}
 
 # SPOOLOPEN response indicators
 SPOOL_SUCCESS_PATTERNS = ['NORMAL', 'RESPONSE: NORMAL']
@@ -304,8 +293,6 @@ class Gr0gu3270:
         self.pending_transaction = None
         self.transaction_history = []
 
-        # Security Audit (PR4) — bulk audit removed, kept for SPOOL logging
-        self.audit_results = []
         self.last_server_data = None
 
         # AID Scan (PR5)
@@ -530,50 +517,6 @@ class Gr0gu3270:
                             DURATION_MS REAL,
                             RESPONSE_LEN INTEGER,
                             STATUS TEXT)
-                            """)
-            self.sql_con.commit()
-
-        # Security Audit table (PR4)
-        self.sql_cur.execute("""
-                             SELECT count(name)
-                             FROM sqlite_master
-                             WHERE TYPE='table' AND NAME='Audit'
-                             """)
-        if self.sql_cur.fetchone()[0] != 1:
-            self.logger.debug("Creating Audit table...")
-            self.sql_cur.execute("""
-                            CREATE TABLE Audit (
-                            ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                            TIMESTAMP TEXT,
-                            TXN_CODE TEXT,
-                            STATUS TEXT,
-                            RESPONSE_PREVIEW TEXT,
-                            RESPONSE_LEN INTEGER)
-                            """)
-            self.sql_con.commit()
-
-        # Scan Results table (Single Transaction Scan)
-        self.sql_cur.execute("""
-                             SELECT count(name)
-                             FROM sqlite_master
-                             WHERE TYPE='table' AND NAME='ScanResults'
-                             """)
-        if self.sql_cur.fetchone()[0] != 1:
-            self.logger.debug("Creating ScanResults table...")
-            self.sql_cur.execute("""
-                            CREATE TABLE ScanResults (
-                            ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                            TIMESTAMP TEXT,
-                            TXN_CODE TEXT,
-                            STATUS TEXT,
-                            ABENDS TEXT,
-                            FIELD_ANALYSIS TEXT,
-                            PF_KEYS TEXT,
-                            ESM_TYPE TEXT,
-                            RESPONSE_LEN INTEGER,
-                            DURATION_MS REAL,
-                            RESPONSE_PREVIEW TEXT,
-                            FULL_REPORT TEXT)
                             """)
             self.sql_con.commit()
 
@@ -1869,16 +1812,6 @@ class Gr0gu3270:
                     break
             result['detail'] = 'SPOOLOPEN denied: {}'.format(fail_reason)
 
-        # Log to audit table
-        self.write_audit_log({
-            'txn_code': 'SPOOL_CHECK',
-            'status': result['status'],
-            'response_preview': result['response_preview'],
-            'response_len': len(open_raw),
-            'timestamp': result['timestamp'],
-        })
-        self.audit_results.append(result)
-
         self.logger.debug("SPOOL check result: {}".format(result['status']))
         return result
 
@@ -1941,26 +1874,10 @@ class Gr0gu3270:
             'timestamp': time.time(),
         }
 
-        self.write_audit_log({
-            'txn_code': 'SPOOL_POC_FTP',
-            'status': status,
-            'response_preview': detail,
-            'response_len': 0,
-            'timestamp': result['timestamp'],
-        })
-        self.audit_results.append(result)
-
         self.logger.debug("SPOOL PoC FTP result: {}".format(status))
         return result
 
-    def write_audit_log(self, result):
-        '''Writes an audit result to the database'''
-        self.sql_cur.execute(
-            "INSERT INTO Audit ('TIMESTAMP', 'TXN_CODE', 'STATUS', 'RESPONSE_PREVIEW', 'RESPONSE_LEN') VALUES (?, ?, ?, ?, ?)",
-            (str(result['timestamp']), result['txn_code'], result['status'],
-             result['response_preview'], result['response_len'])
-        )
-        self.sql_con.commit()
+
 
     # ---- Single Transaction Scan Methods ----
 

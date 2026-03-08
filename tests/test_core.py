@@ -217,12 +217,6 @@ class TestAnalyzeScreenFields:
 # ---- SPOOL/RCE Detection ----
 
 class TestSpoolConstants:
-    def test_spool_status_codes_exist(self):
-        """AUDIT_STATUS includes SPOOL_OPEN and SPOOL_CLOSED."""
-        from libGr0gu3270 import AUDIT_STATUS
-        assert 'SPOOL_OPEN' in AUDIT_STATUS
-        assert 'SPOOL_CLOSED' in AUDIT_STATUS
-
     def test_spool_patterns_exist(self):
         """SPOOL_SUCCESS_PATTERNS and SPOOL_FAIL_PATTERNS are defined."""
         from libGr0gu3270 import SPOOL_SUCCESS_PATTERNS, SPOOL_FAIL_PATTERNS
