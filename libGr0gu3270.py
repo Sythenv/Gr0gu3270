@@ -256,6 +256,8 @@ class Gr0gu3270:
         self.aid_scan_index = 0
         self.aid_scan_replay_path = []
         self.aid_scan_ref_screen = None
+        self.aid_scan_timeout = 1.0
+        self.aid_scan_txn_code = None
 
         # State Tracking Vars
         self.hack_toggled = False
@@ -1483,13 +1485,13 @@ class Gr0gu3270:
 
     # Keys with discovery potential only.
     # Excluded: PF3 (exit — known), PA1-3 (attention — rarely mapped).
-    # Order: safe (rarely mapped) → interesting (nav/business) → risky (help/submit)
+    # Order: safe (rarely mapped) → interesting (nav/business)
+    # Excluded: PF1 (help noise), PF3 (exit), ENTER (submits form), PA1-3 (rarely mapped/exit)
     AID_SCAN_KEYS = [
         'PF13', 'PF14', 'PF15', 'PF16', 'PF17', 'PF18',
         'PF19', 'PF20', 'PF21', 'PF22', 'PF23', 'PF24',
         'PF9', 'PF10', 'PF11', 'PF12',
         'PF7', 'PF8', 'PF4', 'PF5', 'PF6', 'PF2',
-        'PF1', 'ENTER',
     ]
 
     def build_aid_payload(self, aid_name, is_tn3270e):
@@ -1561,6 +1563,10 @@ class Gr0gu3270:
             return self.build_txn_payload(text, is_tn3270e)
         return b''
 
+    def set_aid_scan_timeout(self, t):
+        '''Set AID scan response timeout (clamped 0.5–10s).'''
+        self.aid_scan_timeout = max(0.5, min(float(t), 10.0))
+
     def aid_scan_start(self):
         '''Starts an AID scan from the current screen.
         Extracts replay path and reference screen from logs.'''
@@ -1571,8 +1577,18 @@ class Gr0gu3270:
         self.aid_scan_results = []
         self.aid_scan_running = True
         self.aid_scan_needs_recovery = False
-        self.logger.debug("AID scan started, replay path has {} steps".format(
-            len(self.aid_scan_replay_path)))
+        # Capture txn code for fast CLEAR+txn recovery (same pattern as fuzzer)
+        self.aid_scan_txn_code = None
+        try:
+            self.sql_cur.execute(
+                "SELECT RAW_DATA FROM Logs WHERE C_S='C' ORDER BY ID DESC LIMIT 1")
+            row = self.sql_cur.fetchone()
+            if row:
+                self.aid_scan_txn_code = self.detect_transaction_code(bytes(row[0]))
+        except Exception:
+            pass
+        self.logger.debug("AID scan started, replay path has {} steps, txn_code={}".format(
+            len(self.aid_scan_replay_path), self.aid_scan_txn_code))
 
     def aid_scan_stop(self):
         '''Stops the running AID scan.'''
@@ -1647,12 +1663,12 @@ class Gr0gu3270:
         # Send the AID key
         payload = self.build_aid_payload(aid_name, is_tn3270e)
         self.write_database_log('C', 'AID scan: {}'.format(aid_name), payload)
-        server_data = self._aid_scan_send_and_read(payload, timeout=2)
+        server_data = self._aid_scan_send_and_read(payload, timeout=self.aid_scan_timeout)
 
         result = {
             'aid_key': aid_name,
-            'category': 'TIMEOUT',
-            'status': 'TIMEOUT',
+            'category': 'UNMAPPED',
+            'status': 'UNMAPPED',
             'similarity': 0.0,
             'response_preview': '',
             'response_len': 0,
@@ -1710,7 +1726,23 @@ class Gr0gu3270:
         return result
 
     def _aid_scan_try_replay(self, aid_name):
-        '''Attempts replay twice, verifies screen similarity. Returns True if back on target.'''
+        '''Attempts recovery: fast CLEAR+txn first, full replay as fallback.'''
+        is_tn3270e = self.check_inject_3270e()
+
+        # Fast path: CLEAR + txn code (2 commands vs N steps)
+        if self.aid_scan_txn_code:
+            clear_p = self.build_clear_payload(is_tn3270e)
+            txn_p = self.build_txn_payload(self.aid_scan_txn_code, is_tn3270e)
+            self._aid_scan_send_and_read(clear_p, timeout=self.aid_scan_timeout)
+            resp = self._aid_scan_send_and_read(txn_p, timeout=self.aid_scan_timeout)
+            if resp:
+                sim = self.screen_similarity(resp, self.aid_scan_ref_screen)
+                if sim > 0.8:
+                    self.client.send(resp)
+                    return True
+                self.logger.debug("AID scan: fast recovery for {} — similarity {:.0%}, falling back".format(aid_name, sim))
+
+        # Slow path: full replay
         for attempt in range(2):
             replay_response = self.aid_scan_replay()
             if replay_response:

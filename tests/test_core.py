@@ -407,7 +407,7 @@ class TestAidScanState:
         h3270.write_database_log('S', 'ref', ascii_to_ebcdic("MENU SCREEN"))
         h3270.aid_scan_start()
         assert h3270.aid_scan_running is True
-        assert len(h3270.aid_scan_keys) == 24
+        assert len(h3270.aid_scan_keys) == 22
         assert h3270.aid_scan_index == 0
         assert h3270.aid_scan_ref_screen is not None
         assert len(h3270.aid_scan_replay_path) >= 1
@@ -423,6 +423,25 @@ class TestAidScanState:
         assert h3270.get_aid_scan_running() is False
         h3270.aid_scan_running = True
         assert h3270.get_aid_scan_running() is True
+
+    def test_timeout_default(self, h3270):
+        """Default AID scan timeout is 1.0s."""
+        assert h3270.aid_scan_timeout == 1.0
+
+    def test_set_timeout(self, h3270):
+        """set_aid_scan_timeout sets and clamps value."""
+        h3270.set_aid_scan_timeout(3.0)
+        assert h3270.aid_scan_timeout == 3.0
+
+    def test_set_timeout_clamp_low(self, h3270):
+        """Timeout clamped to 0.5 minimum."""
+        h3270.set_aid_scan_timeout(0.1)
+        assert h3270.aid_scan_timeout == 0.5
+
+    def test_set_timeout_clamp_high(self, h3270):
+        """Timeout clamped to 10.0 maximum."""
+        h3270.set_aid_scan_timeout(99)
+        assert h3270.aid_scan_timeout == 10.0
 
 
 class TestAidScanDB:
@@ -505,13 +524,13 @@ class TestAidScanDVCA:
         assert result['category'] == 'NEW_SCREEN'
         assert result['replay_ok'] is True
 
-    def test_timeout_replay_ok(self, h3270):
+    def test_unmapped_replay_ok(self, h3270):
         """DVCA: PA3 ignored — no response, replay still works."""
         ref = self._setup_scan(h3270)
         h3270._aid_scan_send_and_read = lambda payload, timeout=2: None
         h3270.aid_scan_replay = lambda: ref
         result = h3270.aid_scan_next()
-        assert result['category'] == 'TIMEOUT'
+        assert result['category'] == 'UNMAPPED'
         assert result['replay_ok'] is True
 
     def test_violation_abend_replay_ok(self, h3270):
@@ -566,7 +585,7 @@ class TestAidScanDVCA:
         h3270._aid_scan_send_and_read = lambda payload, timeout=2: None
         h3270.aid_scan_replay = lambda: None  # dead
         result = h3270.aid_scan_next()
-        assert result['category'] == 'TIMEOUT'
+        assert result['category'] == 'UNMAPPED'
         assert result['replay_ok'] is False
         assert h3270.aid_scan_running is True
         assert h3270.aid_scan_needs_recovery is True
@@ -616,6 +635,63 @@ class TestAidScanDVCA:
         r4 = h3270.aid_scan_next()
         assert r4['category'] == 'SKIPPED'
         assert len(h3270.aid_scan_results) == 4
+
+
+class TestAidScanFastRecovery:
+    """Tests for CLEAR+txn fast recovery in AID scan."""
+
+    def test_start_captures_txn_code(self, h3270):
+        """aid_scan_start() captures txn code from last client log entry."""
+        # Write a client payload with a detectable txn code
+        is_tn3270e = h3270.check_inject_3270e()
+        txn_payload = h3270.build_txn_payload('MCMM', is_tn3270e)
+        h3270.write_database_log('C', 'txn', txn_payload)
+        h3270.write_database_log('S', 'ref', ascii_to_ebcdic("MCMM MENU"))
+        h3270.aid_scan_start()
+        assert h3270.aid_scan_txn_code == 'MCMM'
+
+    def test_fast_recovery_skips_full_replay(self, h3270):
+        """CLEAR+txn succeeds → full replay is never called."""
+        ref = ascii_to_ebcdic("MCMM MAIN MENU OPTION ==>")
+        h3270.write_database_log('C', 'clear', b'\x6d\xff\xef')
+        h3270.write_database_log('S', 'ref', ref)
+        h3270.aid_scan_start()
+        h3270.aid_scan_txn_code = 'MCMM'
+        h3270.client = MockSocket()
+        h3270.server = MockSocket()
+        # _aid_scan_send_and_read returns ref screen (fast path works)
+        h3270._aid_scan_send_and_read = lambda payload, timeout=1.0: ref
+        # aid_scan_replay should NOT be called — make it fail loudly
+        replay_called = [False]
+        def bad_replay():
+            replay_called[0] = True
+            return None
+        h3270.aid_scan_replay = bad_replay
+        ok = h3270._aid_scan_try_replay('PF1')
+        assert ok is True
+        assert replay_called[0] is False
+
+    def test_fast_recovery_fallback_to_full_replay(self, h3270):
+        """CLEAR+txn gives low similarity → falls back to full replay."""
+        ref = ascii_to_ebcdic("MCMM MAIN MENU OPTION ==>")
+        wrong = ascii_to_ebcdic("COMPLETELY DIFFERENT SCREEN HERE")
+        h3270.write_database_log('C', 'clear', b'\x6d\xff\xef')
+        h3270.write_database_log('S', 'ref', ref)
+        h3270.aid_scan_start()
+        h3270.aid_scan_txn_code = 'MCMM'
+        h3270.client = MockSocket()
+        h3270.server = MockSocket()
+        # Fast path returns wrong screen, full replay returns ref
+        call_count = [0]
+        def mock_send(payload, timeout=1.0):
+            call_count[0] += 1
+            if call_count[0] <= 2:  # CLEAR + txn (fast path)
+                return wrong
+            return ref  # shouldn't be called in send_and_read for replay
+        h3270._aid_scan_send_and_read = mock_send
+        h3270.aid_scan_replay = lambda: ref
+        ok = h3270._aid_scan_try_replay('PF1')
+        assert ok is True  # recovered via full replay
 
 
 # ---- PR6: Multi-Field Payload ----

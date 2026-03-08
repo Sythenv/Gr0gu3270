@@ -374,6 +374,21 @@ def test_fuzz_go_auto_select_numeric(state):
     assert 'boundary-values.txt' in sources
     assert 'db2-injections.txt' not in sources
 
+def test_fuzz_timeout_clamp(state):
+    """Fuzz timeout is clamped to 0.5-10.0 range."""
+    # Low clamp
+    result = state.fuzz_go({'field': {'row': 1, 'col': 1, 'length': 5}, 'timeout': 0.1})
+    # fuzz_go starts the worker thread — just check it accepted
+    assert result['ok'] is True
+    state.inject_running = False  # stop the thread
+    import time; time.sleep(0.1)
+
+    # High clamp
+    result = state.fuzz_go({'field': {'row': 1, 'col': 1, 'length': 5}, 'timeout': 99})
+    assert result['ok'] is True
+    state.inject_running = False
+    time.sleep(0.1)
+
 def test_fuzz_worker_sends_payloads(state, tmp_path):
     """_fuzz_worker sends payloads via _aid_scan_send_and_read."""
     lines = [('AAA', 'test.txt'), ('BBB', 'test.txt')]

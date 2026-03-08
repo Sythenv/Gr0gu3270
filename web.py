@@ -377,7 +377,7 @@ class Gr0gu3270State:
             return {'ok': False, 'message': 'No wordlist files found.'}
 
         key_mode = data.get('key', 'ENTER')
-        timeout = float(data.get('timeout', 1))
+        timeout = max(0.5, min(float(data.get('timeout', 1)), 10.0))
         delay = float(data.get('delay', 0.1))
 
         # Capture txn code from last client payload for simplified recovery
@@ -527,7 +527,7 @@ class Gr0gu3270State:
                 for fk in followup_keys:
                     with self.lock:
                         fk_payload = self.h.build_aid_payload(fk, is_tn3270e)
-                    fk_response = self.h._aid_scan_send_and_read(fk_payload, timeout=1)
+                    fk_response = self.h._aid_scan_send_and_read(fk_payload, timeout=timeout)
                     if fk_response:
                         try:
                             self.h.client.send(fk_response)
@@ -546,8 +546,8 @@ class Gr0gu3270State:
                                 # Simple recovery: CLEAR + re-send txn code
                                 clear_p = self.h.build_clear_payload(is_tn3270e)
                                 txn_p = self.h.build_txn_payload(txn_code, is_tn3270e)
-                                self.h._aid_scan_send_and_read(clear_p, timeout=1)
-                                last_resp = self.h._aid_scan_send_and_read(txn_p, timeout=2)
+                                self.h._aid_scan_send_and_read(clear_p, timeout=timeout)
+                                last_resp = self.h._aid_scan_send_and_read(txn_p, timeout=timeout)
                             else:
                                 # Fallback: full replay if no txn code
                                 with self.lock:
@@ -782,13 +782,15 @@ class Gr0gu3270State:
 
     # ---- AID Scan (PR5) ----
 
-    def aid_scan_start(self):
+    def aid_scan_start(self, data=None):
         if not self.connection_ready.is_set():
             return {'ok': False, 'message': 'Not connected.'}
         if self.h.aid_scan_running:
             return {'ok': False, 'message': 'AID scan already running.'}
 
         with self.lock:
+            if data and 'timeout' in data:
+                self.h.set_aid_scan_timeout(data['timeout'])
             self.h.aid_scan_start()
 
         self.aid_scan_thread = threading.Thread(
@@ -845,9 +847,9 @@ class Gr0gu3270State:
     def get_aid_scan_summary(self):
         with self.lock:
             results = self.h.aid_scan_results
-            summary = {'VIOLATION': [], 'NEW_SCREEN': [], 'SAME_SCREEN': [], 'TIMEOUT': [], 'SKIPPED': []}
+            summary = {'VIOLATION': [], 'NEW_SCREEN': [], 'SAME_SCREEN': [], 'UNMAPPED': [], 'SKIPPED': []}
             for r in results:
-                cat = r.get('category', 'TIMEOUT')
+                cat = r.get('category', 'UNMAPPED')
                 if cat in summary:
                     summary[cat].append(r)
                 else:
@@ -858,7 +860,7 @@ class Gr0gu3270State:
                 'total': len(self.h.aid_scan_keys),
                 'summary': {k: len(v) for k, v in summary.items()},
                 'results': sorted(results,
-                    key=lambda r: {'VIOLATION': 0, 'NEW_SCREEN': 1, 'TIMEOUT': 2, 'SAME_SCREEN': 3, 'SKIPPED': 4}.get(r.get('category', ''), 5))
+                    key=lambda r: {'VIOLATION': 0, 'NEW_SCREEN': 1, 'UNMAPPED': 2, 'SAME_SCREEN': 3, 'SKIPPED': 4}.get(r.get('category', ''), 5))
             }
 
     def run_daemon(self):
@@ -1029,7 +1031,7 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             result = self.state.export_csv()
             self._send_json(result)
         elif path == '/api/aid_scan/start':
-            result = self.state.aid_scan_start()
+            result = self.state.aid_scan_start(data)
             self._send_json(result)
         elif path == '/api/aid_scan/stop':
             result = self.state.aid_scan_stop()
@@ -1191,7 +1193,6 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 
 /* Header */
 .header { background: var(--bg); padding: 0; display: flex; align-items: stretch; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.header-grogu { color: #00969a; font-size: 5px; line-height: 1.1; white-space: pre; padding: 2px 8px; display: flex; align-items: center; text-shadow: 0 0 6px #00969a; opacity: 0.8; border-right: 1px solid var(--border); }
 .header-left { display: flex; flex-direction: column; flex: 1; min-width: 0; justify-content: flex-end; }
 .header .h-title { background: var(--head); color: var(--bg); padding: 5px 10px; font-size: 22px; font-weight: bold; }
 .header .status { font-size: 17px; color: var(--dim); padding: 0 10px; white-space: nowrap; }
@@ -1255,7 +1256,11 @@ body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%
 .controls input[type="checkbox"] { accent-color: var(--head); }
 .fuzz-diff { cursor: help; color: #f90; font-weight: bold; }
 .fuzz-overlay { position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center; }
-.fuzz-popup { background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:16px;width:min(700px,90vw);max-height:80vh;overflow-y:auto;font-size:15px; }
+.fuzz-popup { background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:16px;width:min(700px,90vw);max-height:80vh;overflow-y:auto;font-size:15px;scrollbar-width:thin;scrollbar-color:var(--border) var(--bg); }
+.fuzz-popup::-webkit-scrollbar { width:6px; }
+.fuzz-popup::-webkit-scrollbar-track { background:var(--bg); }
+.fuzz-popup::-webkit-scrollbar-thumb { background:var(--border);border-radius:3px; }
+.fuzz-popup::-webkit-scrollbar-thumb:hover { background:var(--dim); }
 .fuzz-popup h3 { margin:0 0 8px 0;font-size:17px;color:var(--head); }
 .fuzz-popup .fuzz-field-info { color:var(--dim);margin-bottom:8px; }
 .fuzz-popup .fuzz-controls { display:flex;gap:8px;align-items:center;margin-bottom:8px; }
@@ -1368,27 +1373,6 @@ select { background: var(--input-bg); color: var(--text); border: 1px solid var(
 <div class="container">
 <!-- HEADER -->
 <div class="header">
-  <pre class="header-grogu">
-⠀⢀⣠⣄⣀⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣴⣶⡾⠿⠿⠿⠿⢷⣶⣦⣤⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⢰⣿⡟⠛⠛⠛⠻⠿⠿⢿⣶⣶⣦⣤⣤⣀⣀⡀⣀⣴⣾⡿⠟⠋⠉⠀⠀⠀⠀⠀⠀⠀⠀⠉⠙⠻⢿⣷⣦⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⣀⣀⣀⣀⡀
-⠀⠻⣿⣦⡀⠀⠉⠓⠶⢦⣄⣀⠉⠉⠛⠛⠻⠿⠟⠋⠁⠀⠀⠀⣤⡀⠀⠀⢠⠀⠀⠀⣠⠀⠀⠀⠀⠈⠙⠻⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠟⠛⠛⢻⣿
-⠀⠀⠈⠻⣿⣦⠀⠀⠀⠀⠈⠙⠻⢷⣶⣤⡀⠀⠀⠀⠀⢀⣀⡀⠀⠙⢷⡀⠸⡇⠀⣰⠇⠀⢀⣀⣀⠀⠀⠀⠀⠀⠀⣀⣠⣤⣤⣶⡶⠶⠶⠒⠂⠀⠀⣠⣾⠟
-⠀⠀⠀⠀⠈⢿⣷⡀⠀⠀⠀⠀⠀⠀⠈⢻⣿⡄⣠⣴⣿⣯⣭⣽⣷⣆⠀⠁⠀⠀⠀⠀⢠⣾⣿⣿⣿⣿⣦⡀⠀⣠⣾⠟⠋⠁⠀⠀⠀⠀⠀⠀⠀⣠⣾⡟⠁⠀
-⠀⠀⠀⠀⠀⠈⢻⣷⣄⠀⠀⠀⠀⠀⠀⠀⣿⡗⢻⣿⣧⣽⣿⣿⣿⣧⠀⠀⣀⣀⠀⢠⣿⣧⣼⣿⣿⣿⣿⠗⠰⣿⠃⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⡿⠋⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠙⢿⣶⣄⡀⠀⠀⠀⠀⠸⠃⠈⠻⣿⣿⣿⣿⣿⡿⠃⠾⣥⡬⠗⠸⣿⣿⣿⣿⣿⡿⠛⠀⢀⡟⠀⠀⠀⠀⠀⠀⣀⣠⣾⡿⠋⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠿⣷⣶⣤⣤⣄⣰⣄⠀⠀⠉⠉⠉⠁⠀⢀⣀⣠⣄⣀⡀⠀⠉⠉⠉⠀⠀⢀⣠⣾⣥⣤⣤⣤⣶⣶⡿⠿⠛⠉⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⢻⣿⠛⢿⣷⣦⣤⣴⣶⣶⣦⣤⣤⣤⣤⣬⣥⡴⠶⠾⠿⠿⠿⠿⠛⢛⣿⣿⣿⣯⡉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣿⣧⡀⠈⠉⠀⠈⠁⣾⠛⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣴⣿⠟⠉⣹⣿⣇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣸⣿⣿⣦⣀⠀⠀⠀⢻⡀⠀⠀⠀⠀⠀⠀⠀⢀⣠⣤⣶⣿⠋⣿⠛⠃⠀⣈⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⡿⢿⡀⠈⢹⡿⠶⣶⣼⡇⠀⢀⣀⣀⣤⣴⣾⠟⠋⣡⣿⡟⠀⢻⣶⠶⣿⣿⠛⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⣿⣷⡈⢿⣦⣸⠇⢀⡿⠿⠿⡿⠿⠿⣿⠛⠋⠁⠀⣴⠟⣿⣧⡀⠈⢁⣰⣿⠏⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⢻⣦⣈⣽⣀⣾⠃⠀⢸⡇⠀⢸⡇⠀⢀⣠⡾⠋⢰⣿⣿⣿⣿⡿⠟⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠿⢿⣿⣿⡟⠛⠃⠀⠀⣾⠀⠀⢸⡇⠐⠿⠋⠀⠀⣿⢻⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⠁⢀⡴⠋⠀⣿⠀⠀⢸⠇⠀⠀⠀⠀⠀⠁⢸⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣿⡿⠟⠋⠀⠀⠀⣿⠀⠀⣸⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣁⣀⠀⠀⠀⠀⣿⡀⠀⣿⠀⠀⠀⠀⠀⠀⢀⣈⣿⣿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⠛⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠟⠛⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-  </pre>
   <div class="header-left">
     <div class="header-bottom">
       <span class="h-title">Gr0gu3270</span>
@@ -2019,7 +2003,7 @@ async function exportCsv() {
 
 // ---- AID Scan (popup) ----
 let aidScanPoller = null;
-const CAT_COLORS = {VIOLATION:C.alert,NEW_SCREEN:C.text,SAME_SCREEN:C.dim,TIMEOUT:C.dim,SKIPPED:C.dim};
+const CAT_COLORS = {VIOLATION:C.alert,NEW_SCREEN:C.text,SAME_SCREEN:C.dim,UNMAPPED:C.dim,SKIPPED:C.dim};
 
 function openAidScanPopup() {
   if (document.getElementById('aid-scan-overlay')) return;
@@ -2027,12 +2011,13 @@ function openAidScanPopup() {
   overlay.id = 'aid-scan-overlay';
   overlay.className = 'fuzz-overlay';
   overlay.onclick = (e) => { if (e.target === overlay) closeAidScanPopup(); };
-  overlay.innerHTML = `<div class="fuzz-popup">
+  overlay.innerHTML = `<div class="fuzz-popup" style="width:80vw">
     <h3>AID Scan</h3>
-    <p style="font-size:14px;color:var(--dim);margin:0 0 8px 0">Tests 24 keys (ENTER, PF1-2, PF4-24) on current screen with auto-replay.</p>
+    <p style="font-size:14px;color:var(--dim);margin:0 0 8px 0">Tests 22 keys (PF2, PF4-24) on current screen with auto-replay.</p>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <button class="btn" id="aid-scan-btn" onclick="aidScanStart()">START</button>
       <button class="btn danger" id="aid-scan-stop-btn" onclick="aidScanStop()" style="display:none">STOP</button>
+      <input type="number" id="aid-timeout" value="1" min="0.5" max="10" step="0.5" style="width:60px;margin-left:12px"> <label style="color:var(--dim);font-size:13px">s timeout</label>
       <button class="btn" onclick="closeAidScanPopup()" style="margin-left:auto">\u2715</button>
     </div>
     <div id="aid-scan-status" style="color:var(--dim);margin-bottom:4px"></div>
@@ -2041,12 +2026,12 @@ function openAidScanPopup() {
       <span style="color:var(--alert)"><b id="as-violation">0</b> VIOLATION</span>
       <span style="color:var(--head)"><b id="as-new">0</b> NEW</span>
       <span style="color:var(--dim)"><b id="as-same">0</b> SAME</span>
-      <span style="color:var(--dim)"><b id="as-timeout">0</b> TIMEOUT</span>
+      <span style="color:var(--dim)"><b id="as-unmapped">0</b> UNMAPPED</span>
       <span style="color:var(--dim)"><b id="as-skipped">0</b> SKIP</span>
     </div>
-    <div style="max-height:400px;overflow-y:auto">
+    <div style="max-height:400px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) var(--bg)">
       <table style="table-layout:fixed;width:100%"><thead><tr>
-        <th style="width:24px;text-align:center">R</th><th style="width:70px">Key</th><th>Category</th>
+        <th style="width:70px">Key</th><th style="width:100px">Category</th><th style="width:50px">Sim</th><th>Preview</th>
       </tr></thead><tbody id="aid-scan-table"></tbody></table>
     </div>
   </div>`;
@@ -2060,7 +2045,8 @@ function closeAidScanPopup() {
 }
 
 async function aidScanStart() {
-  const r = await post('/api/aid_scan/start');
+  const t = parseFloat(document.getElementById('aid-timeout').value) || 1;
+  const r = await post('/api/aid_scan/start', {timeout: t});
   if (!r.ok) { toast(r.message, 'error'); return; }
   toast(r.message, 'success');
   document.getElementById('aid-scan-btn').style.display = 'none';
@@ -2091,7 +2077,7 @@ async function aidScanPoll() {
   if (el('as-violation')) el('as-violation').textContent = s.VIOLATION||0;
   if (el('as-new')) el('as-new').textContent = s.NEW_SCREEN||0;
   if (el('as-same')) el('as-same').textContent = s.SAME_SCREEN||0;
-  if (el('as-timeout')) el('as-timeout').textContent = s.TIMEOUT||0;
+  if (el('as-unmapped')) el('as-unmapped').textContent = s.UNMAPPED||0;
   if (el('as-skipped')) el('as-skipped').textContent = s.SKIPPED||0;
   const st = el('aid-scan-status');
   if (st) st.textContent = r.progress+'/'+r.total;
@@ -2102,13 +2088,16 @@ async function aidScanPoll() {
     tb.innerHTML = '';
     (r.results||[]).forEach(row => {
       const c = CAT_COLORS[row.category]||C.dim;
-      const rdot = row.replay_ok===false ? 'var(--alert)' : 'var(--text)';
+      const sim = row.similarity != null ? Math.round(row.similarity*100) : '';
+      const simColor = sim==='' ? '' : sim>=90 ? 'var(--text)' : sim>=80 ? '#ffd700' : 'var(--alert)';
+      const preview = (row.response_preview||'').replace(/</g,'&lt;');
       const tr = document.createElement('tr');
-      const preview = (row.response_preview||'').replace(/"/g,'&quot;');
-      tr.setAttribute('title', preview);
-      tr.innerHTML = '<td style="text-align:center"><span style="display:block;margin:auto;width:8px;height:8px;border-radius:50%;background:'+rdot+'"></span></td>'+
-        '<td>'+row.aid_key+'</td>'+
-        '<td style="color:'+c+';font-weight:bold">'+row.category+'</td>';
+      tr.style.cursor = 'pointer';
+      tr.ondblclick = () => { post('/api/inject/keys', {keys:[row.aid_key]}); toast('Sent '+row.aid_key, 'success'); };
+      tr.innerHTML = '<td>'+row.aid_key+'</td>'+
+        '<td style="color:'+c+';font-weight:bold">'+row.category+'</td>'+
+        '<td style="text-align:center;color:'+simColor+'">'+(sim!==''?sim+'%':'')+'</td>'+
+        '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-size:14px">'+preview+'</td>';
       tb.appendChild(tr);
     });
   }
@@ -2507,6 +2496,7 @@ function openFuzzPopup(field) {
     <div class="fuzz-controls">
       <button class="btn" id="fp-start" onclick="fuzzPopupStart()">START</button>
       <button class="btn danger" id="fp-stop" onclick="fuzzPopupStop()" style="display:none">STOP</button>
+      <input type="number" id="fp-timeout" value="1" min="0.5" max="10" step="0.5" style="width:60px;margin-left:12px"> <label style="color:var(--dim);font-size:13px">s timeout</label>
       <button class="btn" onclick="closeFuzzPopup()" style="margin-left:auto">\u2715</button>
     </div>
     <div id="fp-status" style="color:var(--dim);margin-bottom:4px"></div>
@@ -2530,10 +2520,11 @@ function closeFuzzPopup() {
 async function fuzzPopupStart() {
   if (!fuzzField) return;
   const key = 'ENTER';
+  const t = parseFloat(document.getElementById('fp-timeout').value) || 1;
   const r = await post('/api/inject/fuzz', {
     field: {row: fuzzField.row, col: fuzzField.col, length: fuzzField.length,
             hidden: !!fuzzField.hidden, numeric: !!fuzzField.numeric},
-    key: key
+    key: key, timeout: t
   });
   if (!r.ok) { toast(r.message, 'error'); return; }
   document.getElementById('fp-status').textContent = r.message;
