@@ -447,8 +447,12 @@ class Gr0gu3270State:
                             break
                     time.sleep(0.3)
             elif action == 'FIELD':
-                pending_fields.append((step['text'], int(step['row']), int(step['col'])))
+                row = int(step['row']) if step.get('row') is not None else None
+                col = int(step['col']) if step.get('col') is not None else None
+                pending_fields.append((step['text'], row, col))
             else:
+                if pending_fields:
+                    pending_fields = self._resolve_field_positions(pending_fields)
                 with self.lock:
                     payload = self.h.build_macro_step_payload(step, is_tn3270e, pending_fields)
                 pending_fields = []
@@ -867,6 +871,31 @@ class Gr0gu3270State:
         self.macro_thread.start()
         return {'ok': True, 'message': 'Macro started ({} steps).'.format(len(steps))}
 
+    def _resolve_field_positions(self, pending_fields):
+        """Resolve FIELD steps without row/col from current screen map.
+        Fields with (text, None, None) get assigned to input fields in tab order."""
+        needs_resolve = any(r is None or c is None for _, r, c in pending_fields)
+        if not needs_resolve:
+            return pending_fields
+        # Get input fields from screen map in tab order (row, col)
+        with self.lock:
+            screen_fields = [f for f in self.h.current_screen_map
+                             if not f.get('protected') or f.get('hidden')]
+        resolved = []
+        auto_idx = 0
+        for text, row, col in pending_fields:
+            if row is not None and col is not None:
+                resolved.append((text, row, col))
+            elif auto_idx < len(screen_fields):
+                sf = screen_fields[auto_idx]
+                resolved.append((text, sf['row'], sf['col']))
+                auto_idx += 1
+                _dt('FIELD_RESOLVE idx={} -> R{},C{}'.format(auto_idx - 1, sf['row'], sf['col']))
+            else:
+                _dt('FIELD_RESOLVE idx={} -> no more input fields'.format(auto_idx))
+                resolved.append((text, 0, 0))
+        return resolved
+
     def _macro_worker(self, steps):
         try:
             with self.lock:
@@ -886,9 +915,12 @@ class Gr0gu3270State:
                         self.macro_error = 'Timeout waiting for "{}".'.format(step['text'])
                         break
                 elif action == 'FIELD':
-                    # Buffer field for next SEND/AID
-                    pending_fields.append((step['text'], int(step['row']), int(step['col'])))
+                    row = int(step['row']) if step.get('row') is not None else None
+                    col = int(step['col']) if step.get('col') is not None else None
+                    pending_fields.append((step['text'], row, col))
                 else:
+                    if pending_fields:
+                        pending_fields = self._resolve_field_positions(pending_fields)
                     with self.lock:
                         payload = self.h.build_macro_step_payload(step, is_tn3270e, pending_fields)
                     pending_fields = []
@@ -3093,7 +3125,7 @@ function macroEditorUpdateFields(sel) {
   const aidKeyEl = row.querySelector('.me-aid-key');
   const timeoutEl = row.querySelector('.me-timeout');
   const needsText = (action === 'SEND' || action === 'WAIT' || action === 'FIELD');
-  const needsPos = (action === 'SEND' || action === 'FIELD');
+  const needsPos = (action === 'SEND');  // FIELD auto-resolves from screen map, SEND optional
   textEl.style.display = needsText ? '' : 'none';
   rowEl.style.display = needsPos ? '' : 'none';
   colEl.style.display = needsPos ? '' : 'none';
@@ -3102,7 +3134,7 @@ function macroEditorUpdateFields(sel) {
   timeoutEl.style.display = action === 'WAIT' ? '' : 'none';
   if (action === 'SEND') textEl.placeholder = 'text to send';
   if (action === 'WAIT') textEl.placeholder = 'text to wait for';
-  if (action === 'FIELD') textEl.placeholder = 'field value';
+  if (action === 'FIELD') textEl.placeholder = 'value (auto-fills next input field)';
 }
 
 async function macroEditorSave() {

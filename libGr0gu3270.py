@@ -1541,8 +1541,6 @@ class Gr0gu3270:
         if action == 'FIELD':
             if not step.get('text'):
                 return False, 'FIELD requires "text".'
-            if step.get('row') is None or step.get('col') is None:
-                return False, 'FIELD requires "row" and "col".'
         if action == 'AID':
             key = step.get('key', '')
             if key not in self.AIDS:
