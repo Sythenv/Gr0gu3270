@@ -227,6 +227,7 @@ class Gr0gu3270State:
                     'numeric': f['numeric'],
                     'length': f['length'],
                     'content': content,
+                    'bms': f.get('bms', False),
                 })
             esm = 'UNKNOWN'
             if self.h.last_server_data:
@@ -2141,17 +2142,21 @@ function renderScreenMap() {
   smapData.forEach((f, i) => {
     const isInput = !f.protected;
     const isHidden = f.hidden;
+    const isBms = f.bms;
+    if (!smapShowAll && isBms) return;
     if (!smapShowAll && !isInput && !isHidden) return;
     const tr = document.createElement('tr');
-    if (isHidden) tr.className = 'field-hidden';
+    if (isBms) { tr.className = 'field-label'; tr.style.opacity = '0.4'; }
+    else if (isHidden) tr.className = 'field-hidden';
     else if (isInput) tr.className = 'field-input';
     else tr.className = 'field-label';
-    if (isInput || isHidden) {
+    if ((isInput || isHidden) && !isBms) {
       tr.style.cursor = 'pointer';
       tr.ondblclick = () => openFuzzPopup(f);
     }
     const pos = smapShowAll ? '<td>'+f.row+','+f.col+'</td>' : '';
-    tr.innerHTML = pos+'<td>'+(f.hidden?dot:'')+'</td><td>'+(f.numeric?dot:'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+'</td>';
+    const bmsTag = isBms ? ' <span style="color:var(--dim);font-size:11px">BMS</span>' : '';
+    tr.innerHTML = pos+'<td>'+(f.hidden?dot:'')+'</td><td>'+(f.numeric?dot:'')+'</td><td>'+f.length+'</td><td>'+esc(f.content)+bmsTag+'</td>';
     tbody.appendChild(tr);
   });
 }

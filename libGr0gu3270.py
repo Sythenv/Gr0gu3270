@@ -1140,11 +1140,15 @@ class Gr0gu3270:
                 if prev['type'] == 'protected' and prev['content'].strip():
                     f['label'] = prev['content'].strip()
 
+        # Tag BMS overhead fields
+        for f in fields:
+            f['bms'] = self._is_bms_overhead(f)
+
         self.current_screen_map = fields
 
-        # Emit findings for hidden fields
+        # Emit findings for hidden fields (skip BMS overhead)
         for f in fields:
-            if f.get('hidden'):
+            if f.get('hidden') and not f.get('bms'):
                 txn = self.pending_transaction['code'] if self.pending_transaction else None
                 label = f.get('label', '')
                 content = f.get('content', '')
@@ -1156,6 +1160,24 @@ class Gr0gu3270:
                                   constat=constat)
 
         return fields
+
+    @staticmethod
+    def _is_bms_overhead(field):
+        '''Detect CICS BMS infrastructure fields (map control, pagination).
+        These are hidden fields present on nearly every CICS screen and
+        carry no security value for the auditor.'''
+        if not field.get('hidden'):
+            return False
+        length = field.get('length', 0)
+        content = field.get('content', '').strip()
+        row = field.get('row', -1)
+        # Short hidden fields (1-2 bytes) at row 0 — BMS map control
+        if row == 0 and length <= 2:
+            return True
+        # FP/PF pagination indicators — typically last few rows
+        if length <= 2 and content in ('FP', 'PF'):
+            return True
+        return False
 
     def get_screen_map(self):
         return self.current_screen_map
