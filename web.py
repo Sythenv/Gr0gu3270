@@ -1290,15 +1290,15 @@ class Gr0gu3270WebUI:
 
     def _sigint_handler(self, signum, frame):
         print("\nShutting down...")
-        self._shutdown()
-        sys.exit(0)
+        self.state.shutdown_flag.set()
+        # shutdown() must be called from a DIFFERENT thread than serve_forever()
+        threading.Thread(target=self.httpd.shutdown, daemon=True).start()
 
     def _shutdown(self):
+        if getattr(self, '_shutdown_done', False):
+            return
+        self._shutdown_done = True
         self.state.shutdown_flag.set()
-        try:
-            self.httpd.shutdown()
-        except Exception:
-            pass
         self.Gr0gu3270.on_closing()
 
 
