@@ -999,7 +999,8 @@ class Gr0gu3270:
 
         # Check for TN3270E header (5 bytes)
         offset = 0
-        if len(data) > 5 and data[0] == 0x00 and data[4] in (0x00, 0x01, 0x02):
+        # TN3270E: [data-type=0x00] [request] [response-flag] [seq-hi] [seq-lo]
+        if len(data) > 5 and data[0] == 0x00 and data[2] in (0x00, 0x01, 0x02):
             offset = 5
 
         # Skip write command byte and WCC byte
