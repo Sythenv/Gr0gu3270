@@ -1631,16 +1631,29 @@ class Gr0gu3270:
         return self.aid_scan_running
 
     def _aid_scan_send_and_read(self, payload, timeout=2):
-        '''Sends a payload and reads server response. Returns raw bytes or None.'''
+        '''Sends a payload and drains all response chunks. Returns raw bytes or None.'''
         self.server.send(payload)
+        chunks = []
         try:
+            # Wait for first chunk with full timeout
             rlist, _, _ = select.select([self.server], [], [], timeout)
             if self.server in rlist:
                 data = self.server.recv(BUFFER_MAX)
-                if len(data) > 0:
-                    return data
+                if data:
+                    chunks.append(data)
+                # Drain remaining chunks with short timeout
+                while True:
+                    rlist, _, _ = select.select([self.server], [], [], 0.1)
+                    if not rlist:
+                        break
+                    data = self.server.recv(BUFFER_MAX)
+                    if not data:
+                        break
+                    chunks.append(data)
         except Exception:
             pass
+        if chunks:
+            return b''.join(chunks)
         return None
 
     def aid_scan_replay(self):
