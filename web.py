@@ -961,12 +961,17 @@ class Gr0gu3270State:
                             self.h.client.send(chunk)
                             self.h.client.flush()
                             self.h.write_database_log('S', 'macro', chunk)
-                    # Update internal state (screen map, ABEND, etc.) from last response
+                    # Update internal state from ALL chunks (each may be a 3270 command)
                     if chunks:
                         with self.lock:
+                            for chunk in chunks:
+                                prev_fields = len(self.h.current_screen_map)
+                                self.h.parse_screen_map(chunk)
+                                self.h.refresh_aids(chunk)
+                                new_fields = len(self.h.current_screen_map)
+                                _dt('MACRO_PARSE_CHUNK size={} fields={}->{}'.format(
+                                    len(chunk), prev_fields, new_fields))
                             self.h.last_server_data = chunks[-1]
-                            self.h.parse_screen_map(chunks[-1])
-                            self.h.refresh_aids(chunks[-1])
                         _dt('MACRO_SCREEN_UPDATE fields={}'.format(
                             len(self.h.current_screen_map)))
                     with self.lock:

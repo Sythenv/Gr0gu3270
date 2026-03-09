@@ -1144,7 +1144,9 @@ class Gr0gu3270:
         for f in fields:
             f['bms'] = self._is_bms_overhead(f)
 
-        self.current_screen_map = fields
+        # Only replace screen map if we found fields (avoid clearing on partial updates)
+        if fields:
+            self.current_screen_map = fields
 
         # Emit findings for hidden fields (skip BMS overhead)
         for f in fields:
