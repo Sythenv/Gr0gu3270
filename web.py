@@ -519,7 +519,13 @@ class Gr0gu3270State:
             field_loc = 'R{},C{}'.format(fields[0]['row'], fields[0]['col'])
             field_label = fields[0].get('label', '')
 
-            probe_fields = [(probe_text, fields[0]['row'], fields[0]['col'])]
+            # Data starts 1 position after the SF attribute byte
+            f0_data_col = fields[0]['col'] + 1
+            f0_data_row = fields[0]['row']
+            if f0_data_col >= 80:
+                f0_data_col = 0
+                f0_data_row += 1
+            probe_fields = [(probe_text, f0_data_row, f0_data_col)]
             with self.lock:
                 probe_payload = self.h.build_multi_field_payload(
                     probe_fields, is_tn3270e, aid=aid_byte)
@@ -630,7 +636,13 @@ class Gr0gu3270State:
                     text = line
                     if flen > 0 and len(text) > flen:
                         text = text[:flen]
-                    fields_with_text.append((text, field['row'], field['col']))
+                    # Data starts 1 position after the SF attribute byte
+                    data_col = field['col'] + 1
+                    data_row = field['row']
+                    if data_col >= 80:
+                        data_col = 0
+                        data_row += 1
+                    fields_with_text.append((text, data_row, data_col))
 
                 with self.lock:
                     payload = self.h.build_multi_field_payload(

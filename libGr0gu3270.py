@@ -1514,8 +1514,9 @@ class Gr0gu3270:
         if aid_byte in short_aids:
             payload = aid_byte + b'\xff\xef'
         else:
-            # AID + cursor at 0,0 (SBA not needed for bare key)
-            payload = aid_byte + b'\x40\x40\xff\xef'
+            # AID + real cursor position (not hardcoded 0,0 — VTAM rejects invalid positions)
+            cursor_addr = self.encode_buffer_address(self.cursor_row, self.cursor_col)
+            payload = aid_byte + cursor_addr + b'\xff\xef'
         if is_tn3270e:
             payload = b'\x00\x00\x00\x00\x01' + payload
         return payload
