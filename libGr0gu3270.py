@@ -324,6 +324,9 @@ class Gr0gu3270:
         self.hack_color_sa = True
         self.hack_color_hv = True
 
+        # Trace callback (set by web.py to _dt for debug tracing)
+        self._trace = None
+
         # Create the Loggers (file and stderr)
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
@@ -1632,26 +1635,47 @@ class Gr0gu3270:
 
     def _aid_scan_send_and_read(self, payload, timeout=2):
         '''Sends a payload and drains all response chunks. Returns raw bytes or None.'''
-        self.server.send(payload)
+        _t = self._trace
+        if _t:
+            _t('SEND_READ send={} timeout={}'.format(len(payload), timeout))
+        try:
+            self.server.send(payload)
+        except Exception as e:
+            if _t:
+                _t('SEND_READ send_err {}: {}'.format(type(e).__name__, e))
+            return None
         chunks = []
         try:
             # Wait for first chunk with full timeout
             rlist, _, _ = select.select([self.server], [], [], timeout)
-            if self.server in rlist:
+            if not rlist:
+                if _t:
+                    _t('SEND_READ timeout (no response in {}s)'.format(timeout))
+                return None
+            data = self.server.recv(BUFFER_MAX)
+            if _t:
+                _t('SEND_READ recv1={}'.format(len(data) if data else 0))
+            if not data:
+                # Empty recv = connection closed
+                if _t:
+                    _t('SEND_READ connection_closed')
+                return None
+            chunks.append(data)
+            # Drain remaining chunks with short timeout
+            while True:
+                rlist, _, _ = select.select([self.server], [], [], 0.1)
+                if not rlist:
+                    break
                 data = self.server.recv(BUFFER_MAX)
-                if data:
-                    chunks.append(data)
-                # Drain remaining chunks with short timeout
-                while True:
-                    rlist, _, _ = select.select([self.server], [], [], 0.1)
-                    if not rlist:
-                        break
-                    data = self.server.recv(BUFFER_MAX)
-                    if not data:
-                        break
-                    chunks.append(data)
+                if not data:
+                    break
+                chunks.append(data)
+            if _t:
+                total = sum(len(c) for c in chunks)
+                _t('SEND_READ done chunks={} total={}'.format(len(chunks), total))
         except Exception as e:
-            self._send_read_err = '{}: {}'.format(type(e).__name__, e)
+            if _t:
+                _t('SEND_READ recv_err {}: {}'.format(type(e).__name__, e))
         if chunks:
             return b''.join(chunks)
         return None

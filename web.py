@@ -129,6 +129,7 @@ class Gr0gu3270State:
 
     def __init__(self, Gr0gu3270):
         self.h = Gr0gu3270
+        self.h._trace = _dt
         self.lock = threading.Lock()
         self.last_log_id = 0
         self.last_abend_id = 0
