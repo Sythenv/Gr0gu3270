@@ -1066,8 +1066,10 @@ class Gr0gu3270State:
                 sm_after = len(self.h.current_screen_map)
                 last_sd_after = len(self.h.last_server_data) if self.h.last_server_data else 0
                 if last_sd_after != last_sd_before:
-                    _dt('DAEMON_IO server_bytes={} screen_fields={}'.format(
-                        last_sd_after, sm_after))
+                    sd = self.h.last_server_data
+                    hdr = ' '.join('{:02X}'.format(b) for b in sd[:8])
+                    _dt('DAEMON_IO server_bytes={} screen_fields={} hdr=[{}]'.format(
+                        last_sd_after, sm_after, hdr))
             except (BrokenPipeError, ConnectionResetError, OSError) as e:
                 _dt('DAEMON_ERR type={}'.format(type(e).__name__))
             except Exception as e:
