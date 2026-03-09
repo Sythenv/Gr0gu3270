@@ -1010,6 +1010,10 @@ class Gr0gu3270:
             write_cmd = data[offset]
             # Valid write commands: W(0x01/0xF1), EW(0x05/0xF5), EWA(0x7E/0x6E)
             if write_cmd in (0x01, 0xF1, 0x05, 0xF5, 0x7E, 0x6E):
+                # Erase/Write resets cursor to (0,0); IC later in stream will override
+                if write_cmd in (0x05, 0xF5, 0x7E, 0x6E):
+                    self.cursor_row = 0
+                    self.cursor_col = 0
                 offset += 2  # skip cmd + WCC
             else:
                 return []  # not a screen update — keep previous map

@@ -881,8 +881,22 @@ class Gr0gu3270State:
         with self.lock:
             screen_fields = [f for f in self.h.current_screen_map
                              if not f.get('protected') or f.get('hidden')]
+            cr, cc = self.h.cursor_row, self.h.cursor_col
+        # Find starting field: first input field at/after cursor position
+        start_idx = 0
+        cursor_pos = cr * 80 + cc
+        for i, sf in enumerate(screen_fields):
+            data_col = sf['col'] + 1
+            data_row = sf['row']
+            if data_col >= 80:
+                data_col = 0
+                data_row += 1
+            if data_row * 80 + data_col >= cursor_pos:
+                start_idx = i
+                break
+        _dt('FIELD_RESOLVE cursor=R{},C{} start_idx={}/{}'.format(cr, cc, start_idx, len(screen_fields)))
         resolved = []
-        auto_idx = 0
+        auto_idx = start_idx
         for text, row, col in pending_fields:
             if row is not None and col is not None:
                 resolved.append((text, row, col))
