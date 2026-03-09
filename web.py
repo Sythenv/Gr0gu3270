@@ -387,6 +387,19 @@ class Gr0gu3270State:
         timeout = max(0.5, min(float(data.get('timeout', 1)), 10.0))
         delay = float(data.get('delay', 0.1))
 
+        # Load replay macro if specified
+        replay_macro = None
+        macro_file = data.get('macro', '')
+        if macro_file:
+            macro_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'macros', macro_file)
+            if not os.path.isfile(macro_path):
+                return {'ok': False, 'message': 'Replay macro not found: {}'.format(macro_file)}
+            with self.lock:
+                steps, err = self.h.parse_macro(macro_path)
+            if err:
+                return {'ok': False, 'message': 'Replay macro error: {}'.format(err)}
+            replay_macro = steps
+
         # Capture txn code from last client payload for simplified recovery
         txn_code = None
         try:
@@ -401,17 +414,74 @@ class Gr0gu3270State:
         self.inject_running = True
         self.fuzz_progress = {'current': 0, 'total': len(lines) + 1, 'payload': '', 'source': ''}
         self.fuzz_results = []
-        self.inject_status_msg = 'Fuzz starting ({} payloads + 1 probe from {})...'.format(
-            len(lines), ', '.join(sources))
+        macro_label = ' + macro {}'.format(macro_file) if macro_file else ''
+        self.inject_status_msg = 'Fuzz starting ({} payloads + 1 probe from {}{})...'.format(
+            len(lines), ', '.join(sources), macro_label)
         self.inject_thread = threading.Thread(
             target=self._fuzz_worker,
-            args=([field], lines, key_mode, timeout, delay, txn_code),
+            args=([field], lines, key_mode, timeout, delay, txn_code, replay_macro),
             daemon=True)
         self.inject_thread.start()
-        return {'ok': True, 'message': 'Fuzz started: {} payloads + 1 probe from {}'.format(
-            len(lines), ', '.join(sources))}
+        return {'ok': True, 'message': 'Fuzz started: {} payloads + 1 probe from {}{}'.format(
+            len(lines), ', '.join(sources), macro_label)}
 
-    def _fuzz_worker(self, fields, lines_with_source, key_mode, timeout=1, delay=0.1, txn_code=None):
+    def _fuzz_replay_macro(self, steps, is_tn3270e, timeout):
+        """Replay a macro sequence (CLEAR + all steps). Returns last server response."""
+        # CLEAR first to reset state
+        clear_p = self.h.build_clear_payload(is_tn3270e)
+        self.h._aid_scan_send_and_read(clear_p, timeout=timeout)
+        last_resp = None
+        for step in steps:
+            action = step['action']
+            if action == 'WAIT':
+                wait_text = step.get('text', '')
+                wait_timeout = step.get('timeout', 10)
+                deadline = time.time() + wait_timeout
+                while time.time() < deadline and self.inject_running:
+                    with self.lock:
+                        ref = self.h.extract_ref_screen()
+                    if ref:
+                        screen_text = self.h.get_ascii(ref)
+                        if wait_text.lower() in screen_text.lower():
+                            break
+                    time.sleep(0.3)
+            else:
+                with self.lock:
+                    payload = self.h.build_macro_step_payload(step, is_tn3270e)
+                last_resp = self.h._aid_scan_send_and_read(payload, timeout=timeout)
+                if last_resp:
+                    try:
+                        self.h.client.send(last_resp)
+                        self.h.client.flush()
+                    except Exception:
+                        pass
+                time.sleep(0.3)
+        return last_resp
+
+    def _fuzz_recover(self, replay_macro, txn_code, replay_path, is_tn3270e, timeout):
+        """Try to recover the target screen. Macro > txn_code > replay_path."""
+        if replay_macro:
+            last_resp = self._fuzz_replay_macro(replay_macro, is_tn3270e, timeout)
+            if last_resp:
+                return last_resp
+        if txn_code:
+            clear_p = self.h.build_clear_payload(is_tn3270e)
+            txn_p = self.h.build_txn_payload(txn_code, is_tn3270e)
+            self.h._aid_scan_send_and_read(clear_p, timeout=timeout)
+            last_resp = self.h._aid_scan_send_and_read(txn_p, timeout=timeout)
+            if last_resp:
+                try:
+                    self.h.client.send(last_resp)
+                    self.h.client.flush()
+                except Exception:
+                    pass
+                return last_resp
+        # Fallback: replay path from logs
+        with self.lock:
+            self.h.aid_scan_replay_path = replay_path
+            return self.h.aid_scan_replay()
+
+    def _fuzz_worker(self, fields, lines_with_source, key_mode, timeout=1, delay=0.1, txn_code=None, replay_macro=None):
         try:
             self.fuzz_progress['total'] = len(lines_with_source)
 
@@ -507,25 +577,13 @@ class Gr0gu3270State:
                     recovered = False
                     for attempt in range(2):
                         time.sleep(0.3 * (attempt + 1))
-                        if txn_code:
-                            clear_p = self.h.build_clear_payload(is_tn3270e)
-                            txn_p = self.h.build_txn_payload(txn_code, is_tn3270e)
-                            self.h._aid_scan_send_and_read(clear_p, timeout=timeout)
-                            last_resp = self.h._aid_scan_send_and_read(txn_p, timeout=timeout)
-                        else:
-                            with self.lock:
-                                self.h.aid_scan_replay_path = replay_path
-                                last_resp = self.h.aid_scan_replay()
+                        last_resp = self._fuzz_recover(
+                            replay_macro, txn_code, replay_path, is_tn3270e, timeout)
                         if last_resp:
                             sim2 = self.h.screen_similarity(last_resp, ref_screen)
                             if sim2 > sim_threshold:
                                 recovered = True
                                 recovery_count += 1
-                                try:
-                                    self.h.client.send(last_resp)
-                                    self.h.client.flush()
-                                except Exception:
-                                    pass
                                 break
                     if not recovered:
                         self.inject_status_msg = "Lost screen after overflow probe — recovery failed."
@@ -674,27 +732,13 @@ class Gr0gu3270State:
                         recovered = False
                         for attempt in range(2):
                             time.sleep(0.3 * (attempt + 1))
-                            if txn_code:
-                                # Simple recovery: CLEAR + re-send txn code
-                                clear_p = self.h.build_clear_payload(is_tn3270e)
-                                txn_p = self.h.build_txn_payload(txn_code, is_tn3270e)
-                                self.h._aid_scan_send_and_read(clear_p, timeout=timeout)
-                                last_resp = self.h._aid_scan_send_and_read(txn_p, timeout=timeout)
-                            else:
-                                # Fallback: full replay if no txn code
-                                with self.lock:
-                                    self.h.aid_scan_replay_path = replay_path
-                                    last_resp = self.h.aid_scan_replay()
+                            last_resp = self._fuzz_recover(
+                                replay_macro, txn_code, replay_path, is_tn3270e, timeout)
                             if last_resp:
                                 sim2 = self.h.screen_similarity(last_resp, ref_screen)
                                 if sim2 > sim_threshold:
                                     recovered = True
                                     recovery_count += 1
-                                    try:
-                                        self.h.client.send(last_resp)
-                                        self.h.client.flush()
-                                    except Exception:
-                                        pass
                                     break
                         if not recovered:
                             consecutive_fails += 1
@@ -875,6 +919,50 @@ class Gr0gu3270State:
             return {'files': []}
         files = [f for f in sorted(os.listdir(macro_dir)) if f.endswith('.json')]
         return {'files': files}
+
+    def macro_save(self, data):
+        """Save a macro to the macros/ directory."""
+        name = data.get('name', '').strip()
+        steps = data.get('steps', [])
+        if not name:
+            return {'ok': False, 'message': 'Macro name is required.'}
+        if not steps:
+            return {'ok': False, 'message': 'Macro must have at least one step.'}
+        # Validate steps
+        with self.lock:
+            for i, step in enumerate(steps):
+                ok, err = self.h.validate_macro_step(step)
+                if not ok:
+                    return {'ok': False, 'message': 'Step {}: {}'.format(i + 1, err)}
+        # Sanitize filename
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '', name)
+        if not safe_name:
+            return {'ok': False, 'message': 'Invalid macro name.'}
+        filename = safe_name + '.json'
+        macro_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'macros')
+        os.makedirs(macro_dir, exist_ok=True)
+        macro_path = os.path.join(macro_dir, filename)
+        with open(macro_path, 'w') as f:
+            json.dump({'name': name, 'steps': steps}, f, indent=2)
+        return {'ok': True, 'message': 'Macro saved: {}'.format(filename), 'file': filename}
+
+    def macro_load(self, data):
+        """Load a macro file for editing."""
+        filename = data.get('file', '')
+        if not filename:
+            return {'ok': False, 'message': 'No file specified.'}
+        macro_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'macros')
+        macro_path = os.path.join(macro_dir, filename)
+        if not os.path.isfile(macro_path):
+            return {'ok': False, 'message': 'File not found.'}
+        try:
+            with open(macro_path, 'r') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            return {'ok': False, 'message': str(e)}
+        steps = data if isinstance(data, list) else data.get('steps', [])
+        name = data.get('name', filename.replace('.json', '')) if isinstance(data, dict) else filename.replace('.json', '')
+        return {'ok': True, 'name': name, 'steps': steps}
 
     def send_keys(self, data):
         """Queue AID keys for the daemon thread to send to the server."""
@@ -1216,6 +1304,12 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(result)
         elif path == '/api/macro/stop':
             result = self.state.macro_stop()
+            self._send_json(result)
+        elif path == '/api/macro/save':
+            result = self.state.macro_save(data)
+            self._send_json(result)
+        elif path == '/api/macro/load':
+            result = self.state.macro_load(data)
             self._send_json(result)
         elif path == '/api/spool/check':
             result = self.state.spool_check()
@@ -2710,10 +2804,14 @@ startDashboardPollers();
 let fuzzPoller = null;
 let fuzzField = null;
 
-function openFuzzPopup(field) {
+async function openFuzzPopup(field) {
   if (document.getElementById('fuzz-overlay')) return; // already open
   fuzzField = field;
   const type = field.hidden ? 'Hidden' : field.numeric ? 'Numeric' : 'Input';
+  // Load macro list for dropdown
+  const macroList = await api('/api/macro/list').catch(()=>({files:[]}));
+  let macroOpts = '<option value="">No replay macro</option>';
+  (macroList.files||[]).forEach(f => { macroOpts += '<option value="'+esc(f)+'">'+esc(f.replace('.json',''))+'</option>'; });
   const overlay = document.createElement('div');
   overlay.id = 'fuzz-overlay';
   overlay.className = 'fuzz-overlay';
@@ -2726,6 +2824,11 @@ function openFuzzPopup(field) {
       <button class="btn danger" id="fp-stop" onclick="fuzzPopupStop()" style="display:none">STOP</button>
       <input type="number" id="fp-timeout" value="1" min="0.5" max="10" step="0.5" style="width:70px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:17px;margin-left:12px"> <label style="color:var(--dim);font-size:15px">s timeout</label>
       <button class="btn" onclick="closeFuzzPopup()" style="margin-left:auto">\u2715</button>
+    </div>
+    <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
+      <label style="color:var(--dim);font-size:13px">Replay macro:</label>
+      <select id="fp-macro" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:14px">${macroOpts}</select>
+      <button class="btn" onclick="openMacroEditor()" style="font-size:12px;padding:2px 8px" title="Create/Edit macro">EDIT</button>
     </div>
     <div id="fp-status" style="color:var(--dim);margin-bottom:4px"></div>
     <div class="fuzz-progress" id="fp-progress" style="display:none"><div class="fuzz-progress-fill" id="fp-progress-fill"></div></div>
@@ -2749,10 +2852,11 @@ async function fuzzPopupStart() {
   if (!fuzzField) return;
   const key = 'ENTER';
   const t = parseFloat(document.getElementById('fp-timeout').value) || 1;
+  const macro = document.getElementById('fp-macro').value || '';
   const r = await post('/api/inject/fuzz', {
     field: {row: fuzzField.row, col: fuzzField.col, length: fuzzField.length,
             hidden: !!fuzzField.hidden, numeric: !!fuzzField.numeric},
-    key: key, timeout: t
+    key: key, timeout: t, macro: macro
   });
   if (!r.ok) { toast(r.message, 'error'); return; }
   document.getElementById('fp-status').textContent = r.message;
@@ -2815,6 +2919,155 @@ async function fuzzPopupPoll() {
       toast('Fuzz complete', 'success');
     }
   } catch(e) {}
+}
+
+// ---- Macro Editor ----
+const MACRO_ACTIONS = ['SEND', 'WAIT', 'AID', 'CLEAR'];
+const AID_KEYS = ['ENTER','CLEAR','PF1','PF2','PF3','PF4','PF5','PF6','PF7','PF8','PF9','PF10','PF11','PF12','PF13','PF14','PF15','PF16','PF17','PF18','PF19','PF20','PF21','PF22','PF23','PF24','PA1','PA2','PA3'];
+
+function openMacroEditor(file) {
+  if (document.getElementById('macro-editor-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'macro-editor-overlay';
+  overlay.className = 'fuzz-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) closeMacroEditor(); };
+  overlay.innerHTML = `<div class="fuzz-popup" style="width:min(600px,90vw)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 style="margin:0">Macro Editor</h3>
+      <button class="btn" onclick="closeMacroEditor()">\u2715</button>
+    </div>
+    <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center">
+      <label style="color:var(--dim);font-size:13px">Name:</label>
+      <input type="text" id="me-name" value="" placeholder="my-navigation" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:14px">
+      <label style="color:var(--dim);font-size:13px">Load:</label>
+      <select id="me-load" onchange="macroEditorLoad()" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:14px">
+        <option value="">-- New --</option>
+      </select>
+    </div>
+    <div id="me-steps" style="max-height:400px;overflow-y:auto"></div>
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <button class="btn" onclick="macroEditorAddStep()">+ Step</button>
+      <button class="btn" onclick="macroEditorSave()" style="margin-left:auto">SAVE</button>
+    </div>
+    <div id="me-status" style="color:var(--dim);margin-top:4px;font-size:13px"></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  macroEditorLoadList();
+  if (file) {
+    document.getElementById('me-load').value = file;
+    macroEditorLoad();
+  } else {
+    macroEditorAddStep();
+  }
+}
+
+function closeMacroEditor() {
+  const el = document.getElementById('macro-editor-overlay');
+  if (el) el.remove();
+}
+
+async function macroEditorLoadList() {
+  const r = await api('/api/macro/list').catch(()=>({files:[]}));
+  const sel = document.getElementById('me-load');
+  if (!sel) return;
+  const old = sel.value;
+  sel.innerHTML = '<option value="">-- New --</option>';
+  (r.files||[]).forEach(f => {
+    const o = document.createElement('option');
+    o.value = f; o.textContent = f.replace('.json','');
+    sel.appendChild(o);
+  });
+  if (old) sel.value = old;
+}
+
+async function macroEditorLoad() {
+  const file = document.getElementById('me-load').value;
+  if (!file) { document.getElementById('me-steps').innerHTML = ''; macroEditorAddStep(); return; }
+  const r = await post('/api/macro/load', {file: file}).catch(()=>({ok:false}));
+  if (!r.ok) { toast('Failed to load macro', 'error'); return; }
+  document.getElementById('me-name').value = r.name || file.replace('.json','');
+  const container = document.getElementById('me-steps');
+  container.innerHTML = '';
+  (r.steps||[]).forEach(s => macroEditorAddStep(s));
+}
+
+function macroEditorAddStep(step) {
+  const container = document.getElementById('me-steps');
+  if (!container) return;
+  const div = document.createElement('div');
+  div.className = 'me-step';
+  div.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:4px;padding:4px;border:1px solid var(--border);border-radius:4px';
+  const action = (step && step.action) || 'SEND';
+  let actOpts = MACRO_ACTIONS.map(a => '<option value="'+a+'"'+(a===action?' selected':'')+'>'+a+'</option>').join('');
+  let aidOpts = AID_KEYS.map(k => '<option value="'+k+'"'+(step && step.key===k?' selected':'')+'>'+k+'</option>').join('');
+  const text = step ? esc(step.text||'') : '';
+  const aid = step ? (step.aid||'ENTER') : 'ENTER';
+  let aidSendOpts = AID_KEYS.map(k => '<option value="'+k+'"'+(k===aid?' selected':'')+'>'+k+'</option>').join('');
+  const timeout = step ? (step.timeout||3) : 3;
+  div.innerHTML = `
+    <select class="me-action" onchange="macroEditorUpdateFields(this)" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 4px;font-family:inherit;font-size:13px;width:70px">${actOpts}</select>
+    <input class="me-text" placeholder="text" value="${text}" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit;font-size:13px">
+    <select class="me-aid-send" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 4px;font-family:inherit;font-size:13px;width:75px">${aidSendOpts}</select>
+    <select class="me-aid-key" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 4px;font-family:inherit;font-size:13px;width:75px;display:none">${aidOpts}</select>
+    <input class="me-timeout" type="number" value="${timeout}" min="1" max="30" style="width:45px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 4px;font-family:inherit;font-size:13px;display:none" title="Timeout (s)">
+    <button class="btn" onclick="this.parentElement.remove()" style="font-size:11px;padding:1px 6px;color:var(--alert)">\u2715</button>`;
+  container.appendChild(div);
+  macroEditorUpdateFields(div.querySelector('.me-action'));
+}
+
+function macroEditorUpdateFields(sel) {
+  const row = sel.parentElement;
+  const action = sel.value;
+  const textEl = row.querySelector('.me-text');
+  const aidSendEl = row.querySelector('.me-aid-send');
+  const aidKeyEl = row.querySelector('.me-aid-key');
+  const timeoutEl = row.querySelector('.me-timeout');
+  textEl.style.display = (action === 'SEND' || action === 'WAIT') ? '' : 'none';
+  aidSendEl.style.display = action === 'SEND' ? '' : 'none';
+  aidKeyEl.style.display = action === 'AID' ? '' : 'none';
+  timeoutEl.style.display = action === 'WAIT' ? '' : 'none';
+  if (action === 'SEND') textEl.placeholder = 'text to send';
+  if (action === 'WAIT') textEl.placeholder = 'text to wait for';
+}
+
+async function macroEditorSave() {
+  const name = document.getElementById('me-name').value.trim();
+  if (!name) { toast('Macro name required', 'error'); return; }
+  const steps = [];
+  document.querySelectorAll('#me-steps .me-step').forEach(row => {
+    const action = row.querySelector('.me-action').value;
+    const step = {action: action};
+    if (action === 'SEND') {
+      step.text = row.querySelector('.me-text').value;
+      step.aid = row.querySelector('.me-aid-send').value;
+    } else if (action === 'WAIT') {
+      step.text = row.querySelector('.me-text').value;
+      step.timeout = parseInt(row.querySelector('.me-timeout').value) || 3;
+    } else if (action === 'AID') {
+      step.key = row.querySelector('.me-aid-key').value;
+    }
+    steps.push(step);
+  });
+  if (steps.length === 0) { toast('Add at least one step', 'error'); return; }
+  const r = await post('/api/macro/save', {name: name, steps: steps});
+  if (r.ok) {
+    toast(r.message, 'success');
+    document.getElementById('me-status').textContent = r.message;
+    // Refresh macro dropdowns
+    macroEditorLoadList();
+    loadMacroList();
+    // Refresh fuzz popup dropdown if open
+    const fpMacro = document.getElementById('fp-macro');
+    if (fpMacro) {
+      const ml = await api('/api/macro/list').catch(()=>({files:[]}));
+      fpMacro.innerHTML = '<option value="">No replay macro</option>';
+      (ml.files||[]).forEach(f => { fpMacro.innerHTML += '<option value="'+esc(f)+'">'+esc(f.replace('.json',''))+'</option>'; });
+      if (r.file) fpMacro.value = r.file;
+    }
+  } else {
+    toast(r.message, 'error');
+    document.getElementById('me-status').textContent = r.message;
+  }
 }
 
 </script>
