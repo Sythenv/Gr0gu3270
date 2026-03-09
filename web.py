@@ -926,19 +926,41 @@ class Gr0gu3270State:
                     pending_fields = []
                     if not payload:
                         continue
-                    server_data = self.h._aid_scan_send_and_read(payload, timeout=5)
-                    if server_data:
+                    chunks = self._macro_send_and_drain(payload)
+                    for chunk in chunks:
                         with self.lock:
-                            self.h.client.send(server_data)
+                            self.h.client.send(chunk)
                             self.h.client.flush()
-                            self.h.write_database_log('S', 'macro', server_data)
+                            self.h.write_database_log('S', 'macro', chunk)
                     with self.lock:
                         self.h.write_database_log('C', 'macro', payload)
-                    time.sleep(0.3)
         except Exception as e:
             self.macro_error = 'Macro error: {}'.format(e)
         finally:
             self.macro_running = False
+
+    def _macro_send_and_drain(self, payload, timeout=5, settle=0.5):
+        '''Send payload and drain all server data until quiet for settle seconds.'''
+        self.h.server.send(payload)
+        chunks = []
+        # Wait for first response (up to timeout)
+        rlist, _, _ = select.select([self.h.server], [], [], timeout)
+        if self.h.server not in rlist:
+            return chunks
+        data = self.h.server.recv(libGr0gu3270.BUFFER_MAX)
+        if not data:
+            return chunks
+        chunks.append(data)
+        # Drain: keep reading until server is quiet for settle seconds
+        while True:
+            rlist, _, _ = select.select([self.h.server], [], [], settle)
+            if self.h.server not in rlist:
+                break
+            data = self.h.server.recv(libGr0gu3270.BUFFER_MAX)
+            if not data:
+                break
+            chunks.append(data)
+        return chunks
 
     def _macro_wait(self, text, timeout=10):
         deadline = time.time() + timeout
