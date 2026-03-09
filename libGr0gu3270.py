@@ -993,9 +993,8 @@ class Gr0gu3270:
         fields = []
         data = server_data
 
-        # Skip telnet data
+        # Skip telnet data — keep previous screen map
         if len(data) < 2 or data[0] == 0xFF:
-            self.current_screen_map = []
             return []
 
         # Check for TN3270E header (5 bytes)
@@ -1010,8 +1009,7 @@ class Gr0gu3270:
             if write_cmd in (0x01, 0xF1, 0x05, 0xF5, 0x7E, 0x6E):
                 offset += 2  # skip cmd + WCC
             else:
-                self.current_screen_map = []
-                return []
+                return []  # not a screen update — keep previous map
 
         i = offset
         current_row = 0
