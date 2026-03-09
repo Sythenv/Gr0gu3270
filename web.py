@@ -3099,14 +3099,10 @@ function macroEditorAddStep(step) {
   const aid = step ? (step.aid||'ENTER') : 'ENTER';
   let aidSendOpts = AID_KEYS.map(k => '<option value="'+k+'"'+(k===aid?' selected':'')+'>'+k+'</option>').join('');
   const timeout = step ? (step.timeout||3) : 3;
-  const stepRow = step ? (step.row !== undefined ? step.row : '') : '';
-  const stepCol = step ? (step.col !== undefined ? step.col : '') : '';
   const inputStyle = 'background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 4px;font-family:inherit;font-size:13px';
   div.innerHTML = `
     <select class="me-action" onchange="macroEditorUpdateFields(this)" style="${inputStyle};width:70px">${actOpts}</select>
     <input class="me-text" placeholder="text" value="${text}" style="flex:1;${inputStyle};padding:2px 6px">
-    <input class="me-row" type="number" placeholder="R" value="${stepRow}" min="0" max="42" style="width:40px;${inputStyle}" title="Row">
-    <input class="me-col" type="number" placeholder="C" value="${stepCol}" min="0" max="132" style="width:40px;${inputStyle}" title="Col">
     <select class="me-aid-send" style="${inputStyle};width:75px">${aidSendOpts}</select>
     <select class="me-aid-key" style="${inputStyle};width:75px;display:none">${aidOpts}</select>
     <input class="me-timeout" type="number" value="${timeout}" min="1" max="30" style="width:45px;${inputStyle};display:none" title="Timeout (s)">
@@ -3119,16 +3115,11 @@ function macroEditorUpdateFields(sel) {
   const row = sel.parentElement;
   const action = sel.value;
   const textEl = row.querySelector('.me-text');
-  const rowEl = row.querySelector('.me-row');
-  const colEl = row.querySelector('.me-col');
   const aidSendEl = row.querySelector('.me-aid-send');
   const aidKeyEl = row.querySelector('.me-aid-key');
   const timeoutEl = row.querySelector('.me-timeout');
   const needsText = (action === 'SEND' || action === 'WAIT' || action === 'FIELD');
-  const needsPos = (action === 'SEND');  // FIELD auto-resolves from screen map, SEND optional
   textEl.style.display = needsText ? '' : 'none';
-  rowEl.style.display = needsPos ? '' : 'none';
-  colEl.style.display = needsPos ? '' : 'none';
   aidSendEl.style.display = action === 'SEND' ? '' : 'none';
   aidKeyEl.style.display = action === 'AID' ? '' : 'none';
   timeoutEl.style.display = action === 'WAIT' ? '' : 'none';
@@ -3147,13 +3138,8 @@ async function macroEditorSave() {
     if (action === 'SEND') {
       step.text = row.querySelector('.me-text').value;
       step.aid = row.querySelector('.me-aid-send').value;
-      const r = row.querySelector('.me-row').value;
-      const c = row.querySelector('.me-col').value;
-      if (r !== '' && c !== '') { step.row = parseInt(r); step.col = parseInt(c); }
     } else if (action === 'FIELD') {
       step.text = row.querySelector('.me-text').value;
-      step.row = parseInt(row.querySelector('.me-row').value);
-      step.col = parseInt(row.querySelector('.me-col').value);
     } else if (action === 'WAIT') {
       step.text = row.querySelector('.me-text').value;
       step.timeout = parseInt(row.querySelector('.me-timeout').value) || 3;
