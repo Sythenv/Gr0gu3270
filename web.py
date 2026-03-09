@@ -932,6 +932,12 @@ class Gr0gu3270State:
                             self.h.client.send(chunk)
                             self.h.client.flush()
                             self.h.write_database_log('S', 'macro', chunk)
+                    # Update internal state (screen map, ABEND, etc.) from last response
+                    if chunks:
+                        with self.lock:
+                            self.h.last_server_data = chunks[-1]
+                            self.h.parse_screen_map(chunks[-1])
+                            self.h.refresh_aids(chunks[-1])
                     with self.lock:
                         self.h.write_database_log('C', 'macro', payload)
         except Exception as e:
