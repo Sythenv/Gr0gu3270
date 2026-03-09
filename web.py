@@ -888,9 +888,15 @@ class Gr0gu3270State:
                 resolved.append((text, row, col))
             elif auto_idx < len(screen_fields):
                 sf = screen_fields[auto_idx]
-                resolved.append((text, sf['row'], sf['col']))
+                # Field data starts 1 position after the SF attribute byte
+                data_col = sf['col'] + 1
+                data_row = sf['row']
+                if data_col >= 80:
+                    data_col = 0
+                    data_row += 1
+                resolved.append((text, data_row, data_col))
                 auto_idx += 1
-                _dt('FIELD_RESOLVE idx={} -> R{},C{}'.format(auto_idx - 1, sf['row'], sf['col']))
+                _dt('FIELD_RESOLVE idx={} -> R{},C{}'.format(auto_idx - 1, data_row, data_col))
             else:
                 _dt('FIELD_RESOLVE idx={} -> no more input fields'.format(auto_idx))
                 resolved.append((text, 0, 0))
