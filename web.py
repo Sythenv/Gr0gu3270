@@ -20,6 +20,20 @@ import queue
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
+# ---- Debug trace (no sensitive data) ----
+_DTRACE = os.environ.get('GR0GU_DEBUG')
+_dtrace_fh = None
+
+def _dt(msg):
+    """Append a timestamped line to the debug trace file."""
+    global _dtrace_fh
+    if not _DTRACE:
+        return
+    if _dtrace_fh is None:
+        _dtrace_fh = open(_DTRACE, 'a', buffering=1)
+    _dtrace_fh.write('{} {}\n'.format(
+        datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3], msg))
+
 
 class ReusableHTTPServer(ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
@@ -124,6 +138,7 @@ class Gr0gu3270State:
         self.inject_thread = None
         self.shutdown_flag = threading.Event()
         self.connection_ready = threading.Event()
+        _dt('STATE_INIT')
         self.aid_scan_thread = None
         self.last_aid_scan_id = 0
         # Command queue: HTTP threads queue (label, payload) tuples,
@@ -1012,17 +1027,21 @@ class Gr0gu3270State:
             return
 
         # 1. Drain the command queue → send to server (no lock needed)
+        drained = 0
         while True:
             try:
                 label, payload = self._cmd_queue.get_nowait()
+                drained += 1
             except queue.Empty:
                 break
             try:
                 with self.lock:
                     self.h.write_database_log('C', label, payload)
                 self.h.server.send(payload)
-            except OSError:
-                pass
+            except OSError as e:
+                _dt('CMD_SEND_ERR type={}'.format(type(e).__name__))
+        if drained:
+            _dt('CMD_DRAINED count={}'.format(drained))
 
         # 2. Flush any pending client send buffer
         client = self.h.client
@@ -1032,17 +1051,27 @@ class Gr0gu3270State:
         # 3. Run proxy loop (reads both sockets, processes data)
         with self.lock:
             if self.h.is_offline():
+                _dt('DAEMON_SKIP reason=offline')
                 return
             if self.h.aid_scan_running:
+                _dt('DAEMON_SKIP reason=aid_scan')
                 return
             if self.inject_running:
+                _dt('DAEMON_SKIP reason=inject')
                 return
             try:
+                sm_before = len(self.h.current_screen_map)
+                last_sd_before = len(self.h.last_server_data) if self.h.last_server_data else 0
                 self.h.daemon()
-            except (BrokenPipeError, ConnectionResetError, OSError):
-                pass
-            except Exception:
-                pass
+                sm_after = len(self.h.current_screen_map)
+                last_sd_after = len(self.h.last_server_data) if self.h.last_server_data else 0
+                if last_sd_after != last_sd_before:
+                    _dt('DAEMON_IO server_bytes={} screen_fields={}'.format(
+                        last_sd_after, sm_after))
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                _dt('DAEMON_ERR type={}'.format(type(e).__name__))
+            except Exception as e:
+                _dt('DAEMON_ERR type={} msg={}'.format(type(e).__name__, e))
 
 
 # ---- HTTP Handler ----
@@ -1091,7 +1120,10 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             self._send_json(self.state.get_status())
         elif path == '/api/logs':
             since = int(params.get('since', ['0'])[0])
-            self._send_json(self.state.get_logs(since))
+            data = self.state.get_logs(since)
+            if data:
+                _dt('API_LOGS count={} since={}'.format(len(data), since))
+            self._send_json(data)
         elif path.startswith('/api/log/'):
             try:
                 record_id = int(path.split('/')[-1])
@@ -1106,7 +1138,9 @@ class Gr0gu3270Handler(BaseHTTPRequestHandler):
             since = int(params.get('since', ['0'])[0])
             self._send_json(self.state.get_abends(since))
         elif path == '/api/screen_map':
-            self._send_json(self.state.get_screen_map())
+            data = self.state.get_screen_map()
+            _dt('API_SCREEN_MAP fields={} esm={}'.format(len(data.get('fields', [])), data.get('esm', '?')))
+            self._send_json(data)
         elif path == '/api/transactions':
             since = int(params.get('since', ['0'])[0])
             self._send_json(self.state.get_transactions(since))
@@ -1284,9 +1318,21 @@ class Gr0gu3270WebUI:
             self._shutdown()
 
     def _daemon_loop(self):
+        _dt('DAEMON_LOOP_START')
+        _logged_waiting = False
+        _logged_running = False
         while not self.state.shutdown_flag.is_set():
+            if not self.state.connection_ready.is_set():
+                if not _logged_waiting:
+                    _dt('DAEMON_LOOP waiting_for_connection')
+                    _logged_waiting = True
+            else:
+                if not _logged_running:
+                    _dt('DAEMON_LOOP connection_ready, entering run_daemon')
+                    _logged_running = True
             self.state.run_daemon()
             time.sleep(0.01)
+        _dt('DAEMON_LOOP_STOP')
 
     def _sigint_handler(self, signum, frame):
         print("\nShutting down...")

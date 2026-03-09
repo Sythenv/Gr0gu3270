@@ -59,6 +59,8 @@ def main():
             print("Server connected.")
             Gr0gu3270.check_inject_3270e()
             ui.state.connection_ready.set()
+            from web import _dt
+            _dt('CONNECTION_READY client+server connected')
             if args.macro:
                 import time
                 time.sleep(0.5)
