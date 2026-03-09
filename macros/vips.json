@@ -1,0 +1,12 @@
+{
+  "name": "VIPS macro (from Quick3270)",
+  "steps": [
+    {"action": "SEND", "text": "IDGE"},
+    {"action": "SEND", "text": "00058158001"},
+    {"action": "FIELD", "text": "01"},
+    {"action": "FIELD", "text": "03"},
+    {"action": "AID", "key": "ENTER"},
+    {"action": "SEND", "text": "01"},
+    {"action": "SEND", "text": "7"}
+  ]
+}
