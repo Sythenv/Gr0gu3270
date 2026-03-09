@@ -1268,6 +1268,9 @@ class Gr0gu3270State:
             if self.inject_running:
                 _dt('DAEMON_SKIP reason=inject')
                 return
+            if self.macro_running:
+                _dt('DAEMON_SKIP reason=macro')
+                return
             try:
                 sm_before = len(self.h.current_screen_map)
                 last_sd_before = len(self.h.last_server_data) if self.h.last_server_data else 0
