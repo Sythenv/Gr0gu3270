@@ -1121,17 +1121,23 @@ class Gr0gu3270State:
                     break
 
                 with self.lock:
-                    if not self.h.get_aid_scan_running():
-                        _dt('AID_SCAN_WORKER not_running after {} keys'.format(key_count))
-                        break
-                    _dt('AID_SCAN_NEXT key_index={}'.format(self.h.aid_scan_index))
-                    result = self.h.aid_scan_next()
-                    if result is None:
-                        _dt('AID_SCAN_WORKER done after {} keys'.format(key_count))
-                        break
-                    key_count += 1
-                    _dt('AID_SCAN_RESULT key={} cat={} replay={}'.format(
-                        result.get('aid_key'), result.get('category'), result.get('replay_ok')))
+                    running = self.h.get_aid_scan_running()
+                    idx = self.h.aid_scan_index
+                if not running:
+                    _dt('AID_SCAN_WORKER not_running after {} keys'.format(key_count))
+                    break
+
+                # Run aid_scan_next() OUTSIDE the lock — daemon loop already
+                # skips when aid_scan_running=True, and the monkey-patched
+                # _fuzz_replay_macro needs to acquire the lock internally.
+                _dt('AID_SCAN_NEXT key_index={}'.format(idx))
+                result = self.h.aid_scan_next()
+                if result is None:
+                    _dt('AID_SCAN_WORKER done after {} keys'.format(key_count))
+                    break
+                key_count += 1
+                _dt('AID_SCAN_RESULT key={} cat={} replay={}'.format(
+                    result.get('aid_key'), result.get('category'), result.get('replay_ok')))
 
                 # Pause between tests to let mainframe settle
                 time.sleep(0.3)
