@@ -1027,19 +1027,42 @@ class Gr0gu3270State:
         if self.h.aid_scan_running:
             return {'ok': False, 'message': 'AID scan already running.'}
 
+        # Load replay macro if specified
+        replay_macro = None
+        macro_file = data.get('macro', '') if data else ''
+        if macro_file:
+            macro_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'macros', macro_file)
+            if not os.path.isfile(macro_path):
+                return {'ok': False, 'message': 'Replay macro not found: {}'.format(macro_file)}
+            with self.lock:
+                steps, err = self.h.parse_macro(macro_path)
+            if err:
+                return {'ok': False, 'message': 'Replay macro error: {}'.format(err)}
+            replay_macro = steps
+
         with self.lock:
             if data and 'timeout' in data:
                 self.h.set_aid_scan_timeout(data['timeout'])
             self.h.aid_scan_start()
 
+        self.aid_scan_replay_macro = replay_macro
         self.aid_scan_thread = threading.Thread(
             target=self._aid_scan_worker, daemon=True)
         self.aid_scan_thread.start()
-        return {'ok': True, 'message': 'AID scan started ({} keys)...'.format(
-            len(self.h.aid_scan_keys))}
+        macro_label = ' + macro {}'.format(macro_file) if macro_file else ''
+        return {'ok': True, 'message': 'AID scan started ({} keys{})...'.format(
+            len(self.h.aid_scan_keys), macro_label)}
 
     def _aid_scan_worker(self):
         try:
+            macro = getattr(self, 'aid_scan_replay_macro', None)
+            if macro:
+                # Monkey-patch replay method to use macro
+                is_tn3270e = self.h.check_inject_3270e()
+                original_replay = self.h.aid_scan_replay
+                self.h.aid_scan_replay = lambda: self._fuzz_replay_macro(
+                    macro, is_tn3270e, self.h.aid_scan_timeout)
+
             while True:
                 if self.shutdown_flag.is_set():
                     break
@@ -1059,6 +1082,8 @@ class Gr0gu3270State:
         finally:
             with self.lock:
                 self.h.aid_scan_stop()
+            if macro:
+                self.h.aid_scan_replay = original_replay
 
     def aid_scan_stop(self):
         with self.lock:
@@ -2346,8 +2371,11 @@ async function exportCsv() {
 let aidScanPoller = null;
 const CAT_COLORS = {VIOLATION:C.alert,NEW_SCREEN:C.text,SAME_SCREEN:C.dim,UNMAPPED:C.dim,SKIPPED:C.dim};
 
-function openAidScanPopup() {
+async function openAidScanPopup() {
   if (document.getElementById('aid-scan-overlay')) return;
+  const macroList = await api('/api/macro/list').catch(()=>({files:[]}));
+  let macroOpts = '<option value="">No replay macro</option>';
+  (macroList.files||[]).forEach(f => { macroOpts += '<option value="'+esc(f)+'">'+esc(f.replace('.json',''))+'</option>'; });
   const overlay = document.createElement('div');
   overlay.id = 'aid-scan-overlay';
   overlay.className = 'fuzz-overlay';
@@ -2360,6 +2388,11 @@ function openAidScanPopup() {
       <button class="btn danger" id="aid-scan-stop-btn" onclick="aidScanStop()" style="display:none">STOP</button>
       <input type="number" id="aid-timeout" value="1" min="0.5" max="10" step="0.5" style="width:70px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:17px;margin-left:12px"> <label style="color:var(--dim);font-size:15px">s timeout</label>
       <button class="btn" onclick="closeAidScanPopup()" style="margin-left:auto">\u2715</button>
+    </div>
+    <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
+      <label style="color:var(--dim);font-size:13px">Replay macro:</label>
+      <select id="aid-scan-macro" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:14px">${macroOpts}</select>
+      <button class="btn" onclick="openMacroEditor()" style="font-size:12px;padding:2px 8px" title="Create/Edit macro">EDIT</button>
     </div>
     <div id="aid-scan-status" style="color:var(--dim);margin-bottom:4px"></div>
     <div class="fuzz-progress" id="aid-scan-progress-bar" style="display:none"><div class="fuzz-progress-fill" id="aid-scan-progress-fill"></div></div>
@@ -2387,7 +2420,8 @@ function closeAidScanPopup() {
 
 async function aidScanStart() {
   const t = parseFloat(document.getElementById('aid-timeout').value) || 1;
-  const r = await post('/api/aid_scan/start', {timeout: t});
+  const macro = document.getElementById('aid-scan-macro').value || '';
+  const r = await post('/api/aid_scan/start', {timeout: t, macro: macro});
   if (!r.ok) { toast(r.message, 'error'); return; }
   toast(r.message, 'success');
   document.getElementById('aid-scan-btn').style.display = 'none';
