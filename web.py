@@ -482,6 +482,8 @@ class Gr0gu3270State:
             return self.h.aid_scan_replay()
 
     def _fuzz_worker(self, fields, lines_with_source, key_mode, timeout=1, delay=0.1, txn_code=None, replay_macro=None):
+        _dt('FUZZ_WORKER_START payloads={} macro={} txn={}'.format(
+            len(lines_with_source), bool(replay_macro), txn_code))
         try:
             self.fuzz_progress['total'] = len(lines_with_source)
 
@@ -517,7 +519,9 @@ class Gr0gu3270State:
             self.fuzz_progress['payload'] = 'OVERFLOW-PROBE'
             self.fuzz_progress['source'] = 'overflow-probe'
 
+            _dt('FUZZ_PROBE_SEND field={} len={}'.format(field_loc, probe_len))
             probe_data = self.h._aid_scan_send_and_read(probe_payload, timeout=timeout)
+            _dt('FUZZ_PROBE_RECV bytes={}'.format(len(probe_data) if probe_data else 0))
             probe_status = 'NO_RESPONSE'
             probe_abend = None
             probe_similarity = -1
@@ -754,6 +758,7 @@ class Gr0gu3270State:
                 time.sleep(delay)
 
         except Exception as e:
+            _dt('FUZZ_WORKER_ERR {}: {}'.format(type(e).__name__, e))
             self.inject_status_msg = "Fuzz error: {}".format(e)
         finally:
             self.inject_running = False
@@ -1063,27 +1068,38 @@ class Gr0gu3270State:
                 self.h.aid_scan_replay = lambda: self._fuzz_replay_macro(
                     macro, is_tn3270e, self.h.aid_scan_timeout)
 
+            _dt('AID_SCAN_WORKER_START macro={}'.format(bool(macro)))
+            key_count = 0
             while True:
                 if self.shutdown_flag.is_set():
+                    _dt('AID_SCAN_WORKER shutdown_flag')
                     break
 
                 with self.lock:
                     if not self.h.get_aid_scan_running():
+                        _dt('AID_SCAN_WORKER not_running after {} keys'.format(key_count))
                         break
+                    _dt('AID_SCAN_NEXT key_index={}'.format(self.h.aid_scan_index))
                     result = self.h.aid_scan_next()
                     if result is None:
+                        _dt('AID_SCAN_WORKER done after {} keys'.format(key_count))
                         break
+                    key_count += 1
+                    _dt('AID_SCAN_RESULT key={} cat={} replay={}'.format(
+                        result.get('aid_key'), result.get('category'), result.get('replay_ok')))
 
                 # Pause between tests to let mainframe settle
                 time.sleep(0.3)
 
         except Exception as e:
+            _dt('AID_SCAN_WORKER_ERR {}: {}'.format(type(e).__name__, e))
             logging.getLogger(__name__).error("AID scan error: {}".format(e))
         finally:
             with self.lock:
                 self.h.aid_scan_stop()
             if macro:
                 self.h.aid_scan_replay = original_replay
+            _dt('AID_SCAN_WORKER_STOP')
 
     def aid_scan_stop(self):
         with self.lock:
