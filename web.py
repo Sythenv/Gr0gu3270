@@ -897,20 +897,27 @@ class Gr0gu3270State:
         return resolved
 
     def _macro_worker(self, steps):
+        _dt('MACRO_START steps={}'.format(len(steps)))
         try:
             with self.lock:
                 is_tn3270e = self.h.check_inject_3270e()
+            _dt('MACRO_TN3270E is_tn3270e={}'.format(is_tn3270e))
             pending_fields = []
             for i, step in enumerate(steps):
                 if not self.macro_running:
+                    _dt('MACRO_ABORT step={}'.format(i))
                     break
                 action = step['action']
+                _dt('MACRO_STEP {}/{} action={} text={} key={}'.format(
+                    i + 1, len(steps), action,
+                    step.get('text', ''), step.get('key', '')))
                 self.macro_progress = {
                     'current': i + 1, 'total': len(steps),
                     'step': '{} {}'.format(action, step.get('text', step.get('key', '')))
                 }
                 if action == 'WAIT':
                     ok = self._macro_wait(step['text'], step.get('timeout', 10))
+                    _dt('MACRO_WAIT text={} ok={}'.format(step['text'], ok))
                     if not ok:
                         self.macro_error = 'Timeout waiting for "{}".'.format(step['text'])
                         break
@@ -918,15 +925,23 @@ class Gr0gu3270State:
                     row = int(step['row']) if step.get('row') is not None else None
                     col = int(step['col']) if step.get('col') is not None else None
                     pending_fields.append((step['text'], row, col))
+                    _dt('MACRO_FIELD text={} row={} col={}'.format(step['text'], row, col))
                 else:
                     if pending_fields:
                         pending_fields = self._resolve_field_positions(pending_fields)
+                        _dt('MACRO_RESOLVED_FIELDS {}'.format(
+                            [(t, r, c) for t, r, c in pending_fields]))
                     with self.lock:
                         payload = self.h.build_macro_step_payload(step, is_tn3270e, pending_fields)
                     pending_fields = []
                     if not payload:
+                        _dt('MACRO_SKIP empty payload')
                         continue
+                    _dt('MACRO_SEND len={} hdr=[{}]'.format(
+                        len(payload), ' '.join('{:02X}'.format(b) for b in payload[:8])))
                     chunks = self._macro_send_and_drain(payload)
+                    _dt('MACRO_DRAIN chunks={} sizes={}'.format(
+                        len(chunks), [len(c) for c in chunks]))
                     for chunk in chunks:
                         with self.lock:
                             self.h.client.send(chunk)
@@ -938,10 +953,14 @@ class Gr0gu3270State:
                             self.h.last_server_data = chunks[-1]
                             self.h.parse_screen_map(chunks[-1])
                             self.h.refresh_aids(chunks[-1])
+                        _dt('MACRO_SCREEN_UPDATE fields={}'.format(
+                            len(self.h.current_screen_map)))
                     with self.lock:
                         self.h.write_database_log('C', 'macro', payload)
+            _dt('MACRO_DONE error={}'.format(self.macro_error))
         except Exception as e:
             self.macro_error = 'Macro error: {}'.format(e)
+            _dt('MACRO_EXCEPTION {}'.format(e))
         finally:
             self.macro_running = False
 
