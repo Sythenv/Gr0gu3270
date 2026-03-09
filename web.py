@@ -427,7 +427,8 @@ class Gr0gu3270State:
             len(lines), ', '.join(sources), macro_label)}
 
     def _fuzz_replay_macro(self, steps, is_tn3270e, timeout):
-        """Replay a macro sequence (CLEAR + all steps). Returns last server response."""
+        """Replay a macro sequence (CLEAR + all steps). Returns last server response.
+        Uses the same drain+parse pattern as _macro_worker for correct cursor/field tracking."""
         # CLEAR first to reset state
         clear_p = self.h.build_clear_payload(is_tn3270e)
         self.h._aid_scan_send_and_read(clear_p, timeout=timeout)
@@ -461,6 +462,11 @@ class Gr0gu3270State:
                     continue
                 last_resp = self.h._aid_scan_send_and_read(payload, timeout=timeout)
                 if last_resp:
+                    # Update screen map + cursor (same as _macro_worker)
+                    with self.lock:
+                        new_fields = self.h.parse_screen_map(last_resp)
+                        if new_fields:
+                            self.h.current_screen_map = new_fields
                     try:
                         self.h.client.send(last_resp)
                         self.h.client.flush()

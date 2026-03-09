@@ -1662,9 +1662,9 @@ class Gr0gu3270:
                     _t('SEND_READ connection_closed')
                 return None
             chunks.append(data)
-            # Drain remaining chunks with short timeout
+            # Drain remaining chunks (0.5s silence = done, matches original tend_server)
             while True:
-                rlist, _, _ = select.select([self.server], [], [], 0.1)
+                rlist, _, _ = select.select([self.server], [], [], 0.5)
                 if not rlist:
                     break
                 data = self.server.recv(BUFFER_MAX)
