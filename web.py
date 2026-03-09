@@ -431,6 +431,7 @@ class Gr0gu3270State:
         clear_p = self.h.build_clear_payload(is_tn3270e)
         self.h._aid_scan_send_and_read(clear_p, timeout=timeout)
         last_resp = None
+        pending_fields = []
         for step in steps:
             action = step['action']
             if action == 'WAIT':
@@ -445,9 +446,14 @@ class Gr0gu3270State:
                         if wait_text.lower() in screen_text.lower():
                             break
                     time.sleep(0.3)
+            elif action == 'FIELD':
+                pending_fields.append((step['text'], int(step['row']), int(step['col'])))
             else:
                 with self.lock:
-                    payload = self.h.build_macro_step_payload(step, is_tn3270e)
+                    payload = self.h.build_macro_step_payload(step, is_tn3270e, pending_fields)
+                pending_fields = []
+                if not payload:
+                    continue
                 last_resp = self.h._aid_scan_send_and_read(payload, timeout=timeout)
                 if last_resp:
                     try:
@@ -865,6 +871,7 @@ class Gr0gu3270State:
         try:
             with self.lock:
                 is_tn3270e = self.h.check_inject_3270e()
+            pending_fields = []
             for i, step in enumerate(steps):
                 if not self.macro_running:
                     break
@@ -878,9 +885,15 @@ class Gr0gu3270State:
                     if not ok:
                         self.macro_error = 'Timeout waiting for "{}".'.format(step['text'])
                         break
+                elif action == 'FIELD':
+                    # Buffer field for next SEND/AID
+                    pending_fields.append((step['text'], int(step['row']), int(step['col'])))
                 else:
                     with self.lock:
-                        payload = self.h.build_macro_step_payload(step, is_tn3270e)
+                        payload = self.h.build_macro_step_payload(step, is_tn3270e, pending_fields)
+                    pending_fields = []
+                    if not payload:
+                        continue
                     server_data = self.h._aid_scan_send_and_read(payload, timeout=5)
                     if server_data:
                         with self.lock:
@@ -2972,7 +2985,7 @@ async function fuzzPopupPoll() {
 }
 
 // ---- Macro Editor ----
-const MACRO_ACTIONS = ['SEND', 'WAIT', 'AID', 'CLEAR'];
+const MACRO_ACTIONS = ['SEND', 'FIELD', 'WAIT', 'AID', 'CLEAR'];
 const AID_KEYS = ['ENTER','CLEAR','PF1','PF2','PF3','PF4','PF5','PF6','PF7','PF8','PF9','PF10','PF11','PF12','PF13','PF14','PF15','PF16','PF17','PF18','PF19','PF20','PF21','PF22','PF23','PF24','PA1','PA2','PA3'];
 
 function openMacroEditor(file) {
@@ -3054,12 +3067,17 @@ function macroEditorAddStep(step) {
   const aid = step ? (step.aid||'ENTER') : 'ENTER';
   let aidSendOpts = AID_KEYS.map(k => '<option value="'+k+'"'+(k===aid?' selected':'')+'>'+k+'</option>').join('');
   const timeout = step ? (step.timeout||3) : 3;
+  const stepRow = step ? (step.row !== undefined ? step.row : '') : '';
+  const stepCol = step ? (step.col !== undefined ? step.col : '') : '';
+  const inputStyle = 'background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 4px;font-family:inherit;font-size:13px';
   div.innerHTML = `
-    <select class="me-action" onchange="macroEditorUpdateFields(this)" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 4px;font-family:inherit;font-size:13px;width:70px">${actOpts}</select>
-    <input class="me-text" placeholder="text" value="${text}" style="flex:1;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 6px;font-family:inherit;font-size:13px">
-    <select class="me-aid-send" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 4px;font-family:inherit;font-size:13px;width:75px">${aidSendOpts}</select>
-    <select class="me-aid-key" style="background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 4px;font-family:inherit;font-size:13px;width:75px;display:none">${aidOpts}</select>
-    <input class="me-timeout" type="number" value="${timeout}" min="1" max="30" style="width:45px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:2px 4px;font-family:inherit;font-size:13px;display:none" title="Timeout (s)">
+    <select class="me-action" onchange="macroEditorUpdateFields(this)" style="${inputStyle};width:70px">${actOpts}</select>
+    <input class="me-text" placeholder="text" value="${text}" style="flex:1;${inputStyle};padding:2px 6px">
+    <input class="me-row" type="number" placeholder="R" value="${stepRow}" min="0" max="42" style="width:40px;${inputStyle}" title="Row">
+    <input class="me-col" type="number" placeholder="C" value="${stepCol}" min="0" max="132" style="width:40px;${inputStyle}" title="Col">
+    <select class="me-aid-send" style="${inputStyle};width:75px">${aidSendOpts}</select>
+    <select class="me-aid-key" style="${inputStyle};width:75px;display:none">${aidOpts}</select>
+    <input class="me-timeout" type="number" value="${timeout}" min="1" max="30" style="width:45px;${inputStyle};display:none" title="Timeout (s)">
     <button class="btn" onclick="this.parentElement.remove()" style="font-size:11px;padding:1px 6px;color:var(--alert)">\u2715</button>`;
   container.appendChild(div);
   macroEditorUpdateFields(div.querySelector('.me-action'));
@@ -3069,15 +3087,22 @@ function macroEditorUpdateFields(sel) {
   const row = sel.parentElement;
   const action = sel.value;
   const textEl = row.querySelector('.me-text');
+  const rowEl = row.querySelector('.me-row');
+  const colEl = row.querySelector('.me-col');
   const aidSendEl = row.querySelector('.me-aid-send');
   const aidKeyEl = row.querySelector('.me-aid-key');
   const timeoutEl = row.querySelector('.me-timeout');
-  textEl.style.display = (action === 'SEND' || action === 'WAIT') ? '' : 'none';
+  const needsText = (action === 'SEND' || action === 'WAIT' || action === 'FIELD');
+  const needsPos = (action === 'SEND' || action === 'FIELD');
+  textEl.style.display = needsText ? '' : 'none';
+  rowEl.style.display = needsPos ? '' : 'none';
+  colEl.style.display = needsPos ? '' : 'none';
   aidSendEl.style.display = action === 'SEND' ? '' : 'none';
   aidKeyEl.style.display = action === 'AID' ? '' : 'none';
   timeoutEl.style.display = action === 'WAIT' ? '' : 'none';
   if (action === 'SEND') textEl.placeholder = 'text to send';
   if (action === 'WAIT') textEl.placeholder = 'text to wait for';
+  if (action === 'FIELD') textEl.placeholder = 'field value';
 }
 
 async function macroEditorSave() {
@@ -3090,6 +3115,13 @@ async function macroEditorSave() {
     if (action === 'SEND') {
       step.text = row.querySelector('.me-text').value;
       step.aid = row.querySelector('.me-aid-send').value;
+      const r = row.querySelector('.me-row').value;
+      const c = row.querySelector('.me-col').value;
+      if (r !== '' && c !== '') { step.row = parseInt(r); step.col = parseInt(c); }
+    } else if (action === 'FIELD') {
+      step.text = row.querySelector('.me-text').value;
+      step.row = parseInt(row.querySelector('.me-row').value);
+      step.col = parseInt(row.querySelector('.me-col').value);
     } else if (action === 'WAIT') {
       step.text = row.querySelector('.me-text').value;
       step.timeout = parseInt(row.querySelector('.me-timeout').value) || 3;

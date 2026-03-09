@@ -1509,7 +1509,7 @@ class Gr0gu3270:
 
     # ---- Macro Engine ----
 
-    MACRO_ACTIONS = {'CLEAR', 'SEND', 'WAIT', 'AID'}
+    MACRO_ACTIONS = {'CLEAR', 'SEND', 'WAIT', 'AID', 'FIELD'}
 
     def parse_macro(self, file_path):
         '''Load and validate a macro JSON file. Returns (steps, error).'''
@@ -1534,32 +1534,57 @@ class Gr0gu3270:
         action = step.get('action', '')
         if action not in self.MACRO_ACTIONS:
             return False, 'Unknown action "{}".'.format(action)
-        if action == 'SEND' and not step.get('text'):
-            return False, 'SEND requires "text".'
+        if action == 'SEND' and not step.get('text') and not step.get('fields'):
+            return False, 'SEND requires "text" or "fields".'
         if action == 'WAIT' and not step.get('text'):
             return False, 'WAIT requires "text".'
+        if action == 'FIELD':
+            if not step.get('text'):
+                return False, 'FIELD requires "text".'
+            if step.get('row') is None or step.get('col') is None:
+                return False, 'FIELD requires "row" and "col".'
         if action == 'AID':
             key = step.get('key', '')
             if key not in self.AIDS:
                 return False, 'Unknown AID key "{}".'.format(key)
         return True, None
 
-    def build_macro_step_payload(self, step, is_tn3270e):
-        '''Build bytes payload for a SEND/CLEAR/AID step. Pure — no I/O.'''
+    def build_macro_step_payload(self, step, is_tn3270e, pending_fields=None):
+        '''Build bytes payload for a SEND/CLEAR/AID step. Pure — no I/O.
+        pending_fields: list of (text, row, col) from preceding FIELD steps.'''
         action = step['action']
         if action == 'CLEAR':
             return self.build_clear_payload(is_tn3270e)
+        if action == 'FIELD':
+            return b''  # buffered — no payload
         if action == 'AID':
-            return self.build_aid_payload(step['key'], is_tn3270e)
+            key = step.get('key', 'ENTER')
+            if pending_fields:
+                aid_byte = self.AIDS.get(key, b'\x7d')[0]
+                return self.build_multi_field_payload(
+                    pending_fields, is_tn3270e, aid=aid_byte)
+            return self.build_aid_payload(key, is_tn3270e)
         if action == 'SEND':
-            text = step['text']
             aid_name = step.get('aid', 'ENTER')
             aid_byte = self.AIDS.get(aid_name, b'\x7d')[0]
+            # Collect all fields: pending FIELD steps + this SEND's own text
+            all_fields = list(pending_fields or [])
+            text = step.get('text', '')
             row = step.get('row')
             col = step.get('col')
-            if row is not None and col is not None:
-                return self.build_input_payload(text, int(row), int(col), is_tn3270e, aid=aid_byte)
-            return self.build_txn_payload(text, is_tn3270e)
+            if text:
+                if row is not None and col is not None:
+                    all_fields.append((text, int(row), int(col)))
+                elif not all_fields:
+                    return self.build_txn_payload(text, is_tn3270e)
+                else:
+                    # text without position + pending fields: send pending as multi-field
+                    # and append text at cursor (position 0,0 fallback)
+                    all_fields.append((text, 0, 0))
+            if all_fields:
+                return self.build_multi_field_payload(
+                    all_fields, is_tn3270e, aid=aid_byte)
+            return self.build_txn_payload('', is_tn3270e)
         return b''
 
     def set_aid_scan_timeout(self, t):
