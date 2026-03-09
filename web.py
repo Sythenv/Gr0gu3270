@@ -529,9 +529,12 @@ class Gr0gu3270State:
             self.fuzz_progress['payload'] = 'OVERFLOW-PROBE'
             self.fuzz_progress['source'] = 'overflow-probe'
 
-            _dt('FUZZ_PROBE_SEND field={} len={}'.format(field_loc, probe_len))
+            self.h._send_read_err = None
+            _dt('FUZZ_PROBE_SEND field={} len={} timeout={}'.format(field_loc, probe_len, timeout))
             probe_data = self.h._aid_scan_send_and_read(probe_payload, timeout=timeout)
-            _dt('FUZZ_PROBE_RECV bytes={}'.format(len(probe_data) if probe_data else 0))
+            err = getattr(self.h, '_send_read_err', None)
+            _dt('FUZZ_PROBE_RECV bytes={} err={}'.format(
+                len(probe_data) if probe_data else 0, err))
             probe_status = 'NO_RESPONSE'
             probe_abend = None
             probe_similarity = -1
@@ -640,7 +643,11 @@ class Gr0gu3270State:
                 self.fuzz_progress['source'] = source_file
 
                 # Send payload and read response (I/O outside lock)
+                self.h._send_read_err = None
                 server_data = self.h._aid_scan_send_and_read(payload, timeout=timeout)
+                _dt('FUZZ_PAYLOAD idx={} recv={} err={}'.format(
+                    idx, len(server_data) if server_data else 0,
+                    getattr(self.h, '_send_read_err', None)))
 
                 if server_data:
                     with self.lock:
@@ -1195,6 +1202,7 @@ class Gr0gu3270State:
                 original_replay = self.h.aid_scan_replay
                 self.h.aid_scan_replay = lambda: self._fuzz_replay_macro(
                     macro, is_tn3270e, self.h.aid_scan_timeout)
+                self.h._aid_scan_has_macro = True
 
             _dt('AID_SCAN_WORKER_START macro={}'.format(bool(macro)))
             key_count = 0
@@ -1233,6 +1241,7 @@ class Gr0gu3270State:
                 self.h.aid_scan_stop()
             if macro:
                 self.h.aid_scan_replay = original_replay
+                self.h._aid_scan_has_macro = False
             _dt('AID_SCAN_WORKER_STOP')
 
     def aid_scan_stop(self):

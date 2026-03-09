@@ -1650,8 +1650,8 @@ class Gr0gu3270:
                     if not data:
                         break
                     chunks.append(data)
-        except Exception:
-            pass
+        except Exception as e:
+            self._send_read_err = '{}: {}'.format(type(e).__name__, e)
         if chunks:
             return b''.join(chunks)
         return None
@@ -1781,11 +1781,12 @@ class Gr0gu3270:
         return result
 
     def _aid_scan_try_replay(self, aid_name):
-        '''Attempts recovery: fast CLEAR+txn first, full replay as fallback.'''
+        '''Attempts recovery: fast CLEAR+txn first (unless macro set), full replay as fallback.'''
         is_tn3270e = self.check_inject_3270e()
 
-        # Fast path: CLEAR + txn code (2 commands vs N steps)
-        if self.aid_scan_txn_code:
+        # Fast path: CLEAR + txn code — skip when macro replay is configured
+        # (CLEAR can drop the CICS session on real mainframes → LOGIN screen)
+        if self.aid_scan_txn_code and not getattr(self, '_aid_scan_has_macro', False):
             clear_p = self.build_clear_payload(is_tn3270e)
             txn_p = self.build_txn_payload(self.aid_scan_txn_code, is_tn3270e)
             self._aid_scan_send_and_read(clear_p, timeout=self.aid_scan_timeout)
@@ -1797,7 +1798,7 @@ class Gr0gu3270:
                     return True
                 self.logger.debug("AID scan: fast recovery for {} — similarity {:.0%}, falling back".format(aid_name, sim))
 
-        # Slow path: full replay
+        # Slow path: full replay (or macro replay if monkey-patched)
         for attempt in range(2):
             replay_response = self.aid_scan_replay()
             if replay_response:
