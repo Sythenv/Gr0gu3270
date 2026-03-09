@@ -933,11 +933,14 @@ class Gr0gu3270State:
                     pending_fields.append((step['text'], row, col))
                     _dt('MACRO_FIELD text={} row={} col={}'.format(step['text'], row, col))
                 else:
-                    # Auto-resolve: SEND with text but no position → resolve from screen map
+                    # Auto-resolve: SEND with text but no position → use server cursor (IC order)
                     if (action == 'SEND' and step.get('text')
                             and step.get('row') is None and not pending_fields):
-                        pending_fields = [(step['text'], None, None)]
-                        _dt('MACRO_AUTO_RESOLVE text={}'.format(step['text']))
+                        with self.lock:
+                            cr, cc = self.h.cursor_row, self.h.cursor_col
+                        pending_fields = [(step['text'], cr, cc)]
+                        _dt('MACRO_CURSOR_RESOLVE text={} -> R{},C{}'.format(
+                            step['text'], cr, cc))
                         # Remove text from step so build_macro_step_payload doesn't double it
                         step = dict(step)
                         del step['text']

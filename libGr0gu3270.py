@@ -287,6 +287,8 @@ class Gr0gu3270:
 
         # Screen Map (PR2)
         self.current_screen_map = []
+        self.cursor_row = 0
+        self.cursor_col = 0
 
         # Transaction Correlation (PR3)
         self.transaction_tracking = True  # always on — no toggle
@@ -1094,6 +1096,8 @@ class Gr0gu3270:
                 continue
 
             elif byte == 0x13:  # IC (Insert Cursor)
+                self.cursor_row = current_row
+                self.cursor_col = current_col
                 i += 1
                 continue
 
