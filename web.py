@@ -956,7 +956,19 @@ class Gr0gu3270State:
             with self.lock:
                 is_tn3270e = self.h.check_inject_3270e()
             _dt('MACRO_TN3270E is_tn3270e={}'.format(is_tn3270e))
+            # Auto-prepend CLEAR when macro starts with SEND (txn code pattern)
+            # After CLEAR, screen is unformatted → build_txn_payload works without SBA
+            if steps and steps[0].get('action') == 'SEND' and steps[0].get('text'):
+                clear_p = self.h.build_clear_payload(is_tn3270e)
+                chunks = self._macro_send_and_drain(clear_p)
+                for chunk in chunks:
+                    with self.lock:
+                        self.h.client.send(chunk)
+                        self.h.client.flush()
+                        self.h.write_database_log('S', 'macro-auto-clear', chunk)
+                _dt('MACRO_AUTO_CLEAR chunks={}'.format(len(chunks)))
             pending_fields = []
+            after_clear = True  # start True (auto-CLEAR just sent, or first step)
             for i, step in enumerate(steps):
                 if not self.macro_running:
                     _dt('MACRO_ABORT step={}'.format(i))
@@ -981,9 +993,11 @@ class Gr0gu3270State:
                     pending_fields.append((step['text'], row, col))
                     _dt('MACRO_FIELD text={} row={} col={}'.format(step['text'], row, col))
                 else:
-                    # Auto-resolve: SEND with text but no position → use server cursor (IC order)
+                    # Cursor-resolve: SEND with text, no position, no pending fields
+                    # SKIP after CLEAR — screen is unformatted, build_txn_payload handles it
                     if (action == 'SEND' and step.get('text')
-                            and step.get('row') is None and not pending_fields):
+                            and step.get('row') is None and not pending_fields
+                            and not after_clear):
                         with self.lock:
                             cr, cc = self.h.cursor_row, self.h.cursor_col
                         pending_fields = [(step['text'], cr, cc)]
@@ -992,6 +1006,10 @@ class Gr0gu3270State:
                         # Remove text from step so build_macro_step_payload doesn't double it
                         step = dict(step)
                         del step['text']
+                    if action == 'CLEAR':
+                        after_clear = True
+                    elif action in ('SEND', 'AID'):
+                        after_clear = False
                     if pending_fields:
                         pending_fields = self._resolve_field_positions(pending_fields)
                         _dt('MACRO_RESOLVED_FIELDS {}'.format(
