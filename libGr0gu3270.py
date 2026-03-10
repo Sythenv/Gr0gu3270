@@ -1746,8 +1746,12 @@ class Gr0gu3270:
             self.write_database_log('S', 'AID scan response: {} -> {}'.format(
                 aid_name, category), server_data)
 
-        # Replay path to return to target screen + verify (1 attempt)
-        replay_ok = self._aid_scan_try_replay(aid_name)
+        # Smart replay: skip when screen didn't change (SAME_SCREEN)
+        cat = result.get('category', 'UNMAPPED')
+        if cat == 'SAME_SCREEN':
+            replay_ok = True  # still on target screen, no replay needed
+        else:
+            replay_ok = self._aid_scan_try_replay(aid_name)
 
         result['replay_ok'] = replay_ok
         self.aid_scan_results.append(result)
@@ -1755,7 +1759,6 @@ class Gr0gu3270:
         self.aid_scan_index += 1
 
         # Emit finding for interesting AID scan results
-        cat = result['category']
         aid_txn = self.aid_scan_txn_code or 'unknown'
         aid_code = self.AIDS.get(aid_name, (0,))[0] if aid_name in self.AIDS else 0
         if cat == 'VIOLATION':

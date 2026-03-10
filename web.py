@@ -956,6 +956,21 @@ class Gr0gu3270State:
             with self.lock:
                 is_tn3270e = self.h.check_inject_3270e()
             _dt('MACRO_TN3270E is_tn3270e={}'.format(is_tn3270e))
+            # Auto-CLEAR: if macro starts with SEND (txn code pattern), reset screen first
+            if steps and steps[0].get('action') == 'SEND' and steps[0].get('text'):
+                clear_p = self.h.build_clear_payload(is_tn3270e)
+                chunks = self._macro_send_and_drain(clear_p)
+                if chunks:
+                    with self.lock:
+                        for chunk in chunks:
+                            self.h.client.send(chunk)
+                            self.h.client.flush()
+                            self.h.write_database_log('S', 'macro-auto-clear', chunk)
+                            self.h.parse_screen_map(chunk)
+                            self.h.refresh_aids(chunk)
+                        self.h.last_server_data = chunks[-1]
+                _dt('MACRO_AUTO_CLEAR chunks={} cursor=R{},C{}'.format(
+                    len(chunks), self.h.cursor_row, self.h.cursor_col))
             pending_fields = []
             for i, step in enumerate(steps):
                 if not self.macro_running:

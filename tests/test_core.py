@@ -508,6 +508,20 @@ class TestAidScanDVCA:
         assert result['category'] == 'SAME_SCREEN'
         assert result['replay_ok'] is True
 
+    def test_same_screen_skips_replay(self, h3270):
+        """SAME_SCREEN skips replay entirely — replay function NOT called."""
+        ref = self._setup_scan(h3270)
+        replay_called = [False]
+        def bad_replay():
+            replay_called[0] = True
+            return None  # would fail if called
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: ref
+        h3270.aid_scan_replay = bad_replay
+        result = h3270.aid_scan_next()
+        assert result['category'] == 'SAME_SCREEN'
+        assert result['replay_ok'] is True
+        assert not replay_called[0], "replay should NOT be called for SAME_SCREEN"
+
     def test_new_screen_replay_ok(self, h3270):
         """DVCA: ENTER with option 1 — navigates to MCOR, replay returns to MCMM."""
         ref = self._setup_scan(h3270)
@@ -548,12 +562,14 @@ class TestAidScanDVCA:
         assert h3270.aid_scan_running is False  # scan stopped
 
     def test_transient_fail_stops_scan(self, h3270):
-        """DVCA: slow mainframe — replay fails, scan STOPS (no retry)."""
+        """DVCA: AID key changes screen, replay returns wrong screen — scan STOPS."""
         ref = self._setup_scan(h3270)
-        bad_screen = ascii_to_ebcdic("LOADING PLEASE WAIT")
-        h3270._aid_scan_send_and_read = lambda payload, timeout=2: ref
-        h3270.aid_scan_replay = lambda: bad_screen
+        new_screen = ascii_to_ebcdic("TOTALLY DIFFERENT SCREEN")
+        bad_replay = ascii_to_ebcdic("LOADING PLEASE WAIT")
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: new_screen
+        h3270.aid_scan_replay = lambda: bad_replay
         result = h3270.aid_scan_next()
+        assert result['category'] == 'NEW_SCREEN'
         assert result['replay_ok'] is False
         assert h3270.aid_scan_running is False  # scan stopped
 
