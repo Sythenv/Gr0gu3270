@@ -1236,7 +1236,8 @@ class Gr0gu3270State:
             if data and 'timeout' in data:
                 self.h.set_aid_scan_timeout(data['timeout'])
             key_count = data.get('key_count') if data else None
-            self.h.aid_scan_start(key_count=key_count)
+            keys = data.get('keys') if data else None
+            self.h.aid_scan_start(key_count=key_count, keys=keys)
 
         self.aid_scan_replay_macro = replay_macro
         self.aid_scan_thread = threading.Thread(
@@ -2597,9 +2598,12 @@ async function openAidScanPopup() {
   overlay.id = 'aid-scan-overlay';
   overlay.className = 'fuzz-overlay';
   overlay.onclick = (e) => { if (e.target === overlay) closeAidScanPopup(); };
+  const ALL_AID_KEYS = ['PF2','PF4','PF5','PF6','PF7','PF8','PF9','PF10','PF11','PF12','PF13','PF14','PF15','PF16','PF17','PF18','PF19','PF20','PF21','PF22','PF23','PF24'];
+  const DEFAULT_OFF = new Set(['PF16']);
+  const keyChecks = ALL_AID_KEYS.map(k => '<label style="display:inline-flex;align-items:center;gap:2px;font-size:13px;color:var(--dim)"><input type="checkbox" class="aid-key-cb" value="'+k+'" '+(DEFAULT_OFF.has(k)?'':'checked')+'> '+k+'</label>').join(' ');
   overlay.innerHTML = `<div class="fuzz-popup" style="width:80vw">
     <h3>AID Scan</h3>
-    <p style="font-size:14px;color:var(--dim);margin:0 0 8px 0">Tests 22 keys (PF2, PF4-24) on current screen with auto-replay.</p>
+    <div style="margin:0 0 8px 0;line-height:1.8">${keyChecks}</div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <button class="btn" id="aid-scan-btn" onclick="aidScanStart()">START</button>
       <button class="btn danger" id="aid-scan-stop-btn" onclick="aidScanStop()" style="display:none">STOP</button>
@@ -2638,7 +2642,9 @@ function closeAidScanPopup() {
 async function aidScanStart() {
   const t = parseFloat(document.getElementById('aid-timeout').value) || 1;
   const macro = document.getElementById('aid-scan-macro').value || '';
-  const r = await post('/api/aid_scan/start', {timeout: t, macro: macro});
+  const keys = [...document.querySelectorAll('.aid-key-cb:checked')].map(cb => cb.value);
+  if (!keys.length) { toast('Select at least one key', 'error'); return; }
+  const r = await post('/api/aid_scan/start', {timeout: t, macro: macro, keys: keys});
   if (!r.ok) { toast(r.message, 'error'); return; }
   toast(r.message, 'success');
   document.getElementById('aid-scan-btn').style.display = 'none';

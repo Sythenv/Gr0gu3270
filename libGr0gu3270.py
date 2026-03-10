@@ -1500,7 +1500,7 @@ class Gr0gu3270:
     # Order: safe (rarely mapped) → interesting (nav/business)
     # Excluded: PF1 (help noise), PF3 (exit), ENTER (submits form), PA1-3 (rarely mapped/exit)
     AID_SCAN_KEYS = [
-        'PF13', 'PF14', 'PF15', 'PF16', 'PF17', 'PF18',
+        'PF13', 'PF14', 'PF15', 'PF17', 'PF18',
         'PF19', 'PF20', 'PF21', 'PF22', 'PF23', 'PF24',
         'PF9', 'PF10', 'PF11', 'PF12',
         'PF7', 'PF8', 'PF4', 'PF5', 'PF6', 'PF2',
@@ -1603,13 +1603,18 @@ class Gr0gu3270:
         '''Set AID scan response timeout (clamped 0.5–10s).'''
         self.aid_scan_timeout = max(0.5, min(float(t), 10.0))
 
-    def aid_scan_start(self, key_count=None):
+    def aid_scan_start(self, key_count=None, keys=None):
         '''Starts an AID scan from the current screen.
         Extracts replay path and reference screen from logs.
-        If key_count is specified, only test that many keys.'''
+        keys: optional list of key names to test (default: AID_SCAN_KEYS).
+        key_count: if specified, only test that many keys.'''
         self.aid_scan_replay_path = self.extract_replay_path()
         self.aid_scan_ref_screen = self.extract_ref_screen()
-        self.aid_scan_keys = list(self.AID_SCAN_KEYS)
+        if keys:
+            # Filter to valid AID names only
+            self.aid_scan_keys = [k for k in keys if k in self.AIDS]
+        else:
+            self.aid_scan_keys = list(self.AID_SCAN_KEYS)
         if key_count is not None:
             self.aid_scan_keys = self.aid_scan_keys[:key_count]
         self.aid_scan_index = 0

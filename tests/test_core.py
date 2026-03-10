@@ -401,7 +401,7 @@ class TestAidScanState:
         h3270.write_database_log('S', 'ref', ascii_to_ebcdic("MENU SCREEN"))
         h3270.aid_scan_start()
         assert h3270.aid_scan_running is True
-        assert len(h3270.aid_scan_keys) == 22
+        assert len(h3270.aid_scan_keys) == 21
         assert h3270.aid_scan_index == 0
         assert h3270.aid_scan_ref_screen is not None
         assert len(h3270.aid_scan_replay_path) >= 1
