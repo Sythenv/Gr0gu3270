@@ -488,12 +488,12 @@ class MockSocket:
 class TestAidScanDVCA:
     """Benchmark aid_scan_next() against simulated DVCA scenarios."""
 
-    def _setup_scan(self, h3270, ref_text="MCMM MAIN MENU OPTION ==>"):
+    def _setup_scan(self, h3270, ref_text="MCMM MAIN MENU OPTION ==>", key_count=None):
         """Prepare h3270 for AID scan with mocked sockets and ref screen."""
         ref_screen = ascii_to_ebcdic(ref_text)
         h3270.write_database_log('C', 'clear', b'\x6d\xff\xef')
         h3270.write_database_log('S', 'ref', ref_screen)
-        h3270.aid_scan_start()
+        h3270.aid_scan_start(key_count=key_count)
         h3270.client = MockSocket()
         h3270.server = MockSocket()
         return ref_screen
@@ -537,52 +537,35 @@ class TestAidScanDVCA:
         assert result['category'] == 'VIOLATION'
         assert result['replay_ok'] is True
 
-    def test_session_kill_recovery_continues(self, h3270):
-        """DVCA: PF3 kills KICKS session — replay fails, but scan continues with per-key recovery."""
+    def test_session_kill_recovery_stops(self, h3270):
+        """DVCA: PF3 kills KICKS session — replay fails, scan STOPS (binary recovery)."""
         ref = self._setup_scan(h3270)
         dead_screen = ascii_to_ebcdic("TSO READY")
         h3270._aid_scan_send_and_read = lambda payload, timeout=2: dead_screen
         h3270.aid_scan_replay = lambda: dead_screen  # always returns wrong screen
         result = h3270.aid_scan_next()
-        # First key: tested, red dot
         assert result['replay_ok'] is False
-        # Scan continues (no abort)
-        assert h3270.aid_scan_running is True
-        assert h3270.aid_scan_needs_recovery is True
-        # Next key: pre-recovery fails → SKIPPED, but scan still runs
-        r2 = h3270.aid_scan_next()
-        assert r2['category'] == 'SKIPPED'
-        assert h3270.aid_scan_running is True
+        assert h3270.aid_scan_running is False  # scan stopped
 
-    def test_transient_fail_recovery_succeeds(self, h3270):
-        """DVCA: slow mainframe — first replay fails, recovery succeeds, scan continues."""
+    def test_transient_fail_stops_scan(self, h3270):
+        """DVCA: slow mainframe — replay fails, scan STOPS (no retry)."""
         ref = self._setup_scan(h3270)
         bad_screen = ascii_to_ebcdic("LOADING PLEASE WAIT")
-        # Track replay calls: first 2 return bad screen (initial try_replay),
-        # next 2 return ref screen (recovery try_replay)
-        call_count = [0]
-        def mock_replay():
-            call_count[0] += 1
-            return bad_screen if call_count[0] <= 2 else ref
         h3270._aid_scan_send_and_read = lambda payload, timeout=2: ref
-        h3270.aid_scan_replay = mock_replay
+        h3270.aid_scan_replay = lambda: bad_screen
         result = h3270.aid_scan_next()
-        assert result['replay_ok'] is False  # initial replay failed
-        assert h3270.aid_scan_running is True  # but scan continues (recovered)
-        # No SKIPPED results
-        skipped = [r for r in h3270.aid_scan_results if r['category'] == 'SKIPPED']
-        assert len(skipped) == 0
+        assert result['replay_ok'] is False
+        assert h3270.aid_scan_running is False  # scan stopped
 
-    def test_replay_none_continues(self, h3270):
-        """DVCA: server completely dead — replay returns None, scan continues per-key."""
+    def test_replay_none_stops_scan(self, h3270):
+        """DVCA: server completely dead — replay returns None, scan STOPS."""
         ref = self._setup_scan(h3270)
         h3270._aid_scan_send_and_read = lambda payload, timeout=2: None
         h3270.aid_scan_replay = lambda: None  # dead
         result = h3270.aid_scan_next()
         assert result['category'] == 'UNMAPPED'
         assert result['replay_ok'] is False
-        assert h3270.aid_scan_running is True
-        assert h3270.aid_scan_needs_recovery is True
+        assert h3270.aid_scan_running is False  # scan stopped
 
     def test_dynamic_content_still_matches(self, h3270):
         """DVCA: timestamp changes between ref and replay — similarity still > 0.8."""
@@ -594,8 +577,8 @@ class TestAidScanDVCA:
         result = h3270.aid_scan_next()
         assert result['replay_ok'] is True
 
-    def test_multiple_keys_sequence(self, h3270):
-        """DVCA: scan 3 keys — 2 OK then session kill — scan continues, key 4 SKIPPED."""
+    def test_multiple_keys_sequence_stops_on_fail(self, h3270):
+        """DVCA: scan 3 keys — 2 OK then session kill — scan STOPS at key 3, no key 4."""
         ref = self._setup_scan(h3270)
         dead_screen = ascii_to_ebcdic("TSO READY")
         call_count = [0]
@@ -622,13 +605,30 @@ class TestAidScanDVCA:
 
         r3 = h3270.aid_scan_next()
         assert r3['replay_ok'] is False
-        assert h3270.aid_scan_running is True  # continues, no abort
-        assert h3270.aid_scan_needs_recovery is True
+        assert h3270.aid_scan_running is False  # scan stopped
 
-        # Key 4: pre-recovery fails → SKIPPED
-        r4 = h3270.aid_scan_next()
-        assert r4['category'] == 'SKIPPED'
-        assert len(h3270.aid_scan_results) == 4
+        # No key 4 — scan already stopped
+        assert len(h3270.aid_scan_results) == 3
+
+    def test_key_count_limits_scan(self, h3270):
+        """key_count=2 limits scan to only 2 keys."""
+        ref = self._setup_scan(h3270, key_count=2)
+        h3270._aid_scan_send_and_read = lambda payload, timeout=2: ref
+        h3270.aid_scan_replay = lambda: ref
+
+        r1 = h3270.aid_scan_next()
+        assert r1 is not None
+        assert r1['replay_ok'] is True
+
+        r2 = h3270.aid_scan_next()
+        assert r2 is not None
+        assert r2['replay_ok'] is True
+
+        # 3rd call returns None — no more keys
+        r3 = h3270.aid_scan_next()
+        assert r3 is None
+        assert h3270.aid_scan_running is False
+        assert len(h3270.aid_scan_results) == 2
 
 
 class TestAidScanFastRecovery:

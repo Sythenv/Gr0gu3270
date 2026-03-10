@@ -1202,7 +1202,8 @@ class Gr0gu3270State:
         with self.lock:
             if data and 'timeout' in data:
                 self.h.set_aid_scan_timeout(data['timeout'])
-            self.h.aid_scan_start()
+            key_count = data.get('key_count') if data else None
+            self.h.aid_scan_start(key_count=key_count)
 
         self.aid_scan_replay_macro = replay_macro
         self.aid_scan_thread = threading.Thread(
@@ -1296,10 +1297,12 @@ class Gr0gu3270State:
                     summary[cat].append(r)
                 else:
                     summary[cat] = [r]
+            aborted = len(results) < len(self.h.aid_scan_keys) and not self.h.aid_scan_running
             return {
                 'running': self.h.aid_scan_running,
                 'progress': self.h.aid_scan_index,
                 'total': len(self.h.aid_scan_keys),
+                'aborted': aborted,
                 'summary': {k: len(v) for k, v in summary.items()},
                 'results': sorted(results,
                     key=lambda r: {'VIOLATION': 0, 'NEW_SCREEN': 1, 'UNMAPPED': 2, 'SAME_SCREEN': 3, 'SKIPPED': 4}.get(r.get('category', ''), 5))

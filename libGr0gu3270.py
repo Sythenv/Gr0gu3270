@@ -1603,16 +1603,18 @@ class Gr0gu3270:
         '''Set AID scan response timeout (clamped 0.5–10s).'''
         self.aid_scan_timeout = max(0.5, min(float(t), 10.0))
 
-    def aid_scan_start(self):
+    def aid_scan_start(self, key_count=None):
         '''Starts an AID scan from the current screen.
-        Extracts replay path and reference screen from logs.'''
+        Extracts replay path and reference screen from logs.
+        If key_count is specified, only test that many keys.'''
         self.aid_scan_replay_path = self.extract_replay_path()
         self.aid_scan_ref_screen = self.extract_ref_screen()
         self.aid_scan_keys = list(self.AID_SCAN_KEYS)
+        if key_count is not None:
+            self.aid_scan_keys = self.aid_scan_keys[:key_count]
         self.aid_scan_index = 0
         self.aid_scan_results = []
         self.aid_scan_running = True
-        self.aid_scan_needs_recovery = False
         # Capture txn code for fast CLEAR+txn recovery (same pattern as fuzzer)
         self.aid_scan_txn_code = None
         try:
@@ -1704,6 +1706,7 @@ class Gr0gu3270:
 
     def aid_scan_next(self):
         '''Tests the next AID key. Sends it, captures response, then replays path.
+        Binary recovery: 1 attempt, if fail → scan STOP.
         Returns result dict or None if done.'''
         if self.aid_scan_index >= len(self.aid_scan_keys):
             self.aid_scan_running = False
@@ -1711,24 +1714,6 @@ class Gr0gu3270:
 
         aid_name = self.aid_scan_keys[self.aid_scan_index]
         is_tn3270e = self.check_inject_3270e()
-
-        # If previous key left us on a wrong screen, try to recover first
-        if self.aid_scan_needs_recovery:
-            self.logger.debug("AID scan: pre-recovery before {}...".format(aid_name))
-            recovered = self._aid_scan_try_replay(aid_name)
-            if not recovered:
-                # Can't get back — skip this key and try next
-                self.logger.debug("AID scan: pre-recovery failed, skipping {}".format(aid_name))
-                result = {
-                    'aid_key': aid_name, 'category': 'SKIPPED', 'status': 'SKIPPED',
-                    'similarity': 0.0, 'response_preview': 'Skipped — recovery failed',
-                    'response_len': 0, 'timestamp': time.time(), 'replay_ok': False,
-                }
-                self.aid_scan_results.append(result)
-                self.write_aid_scan_log(result)
-                self.aid_scan_index += 1
-                return result
-            self.aid_scan_needs_recovery = False
 
         # Send the AID key
         payload = self.build_aid_payload(aid_name, is_tn3270e)
@@ -1761,7 +1746,7 @@ class Gr0gu3270:
             self.write_database_log('S', 'AID scan response: {} -> {}'.format(
                 aid_name, category), server_data)
 
-        # Replay path to return to target screen + verify
+        # Replay path to return to target screen + verify (1 attempt)
         replay_ok = self._aid_scan_try_replay(aid_name)
 
         result['replay_ok'] = replay_ok
@@ -1791,17 +1776,10 @@ class Gr0gu3270:
         self.logger.debug("AID scan: {} -> {} (replay: {})".format(
             aid_name, result['category'], 'OK' if replay_ok else 'FAIL'))
 
-        # Replay failed — recovery attempt
+        # Binary recovery: replay failed → STOP scan
         if not replay_ok:
-            self.logger.debug("AID scan: recovery attempt after {}...".format(aid_name))
-            time.sleep(1.0)
-            recovered = self._aid_scan_try_replay(aid_name)
-            if recovered:
-                self.logger.debug("AID scan: recovered after {} — continuing".format(aid_name))
-                self.aid_scan_needs_recovery = False
-            else:
-                self.logger.debug("AID scan: replay failed after {} — will retry before next key".format(aid_name))
-                self.aid_scan_needs_recovery = True
+            self.logger.debug("AID scan: replay failed after {} — stopping scan".format(aid_name))
+            self.aid_scan_running = False
 
         return result
 
@@ -1823,19 +1801,16 @@ class Gr0gu3270:
                     return True
                 self.logger.debug("AID scan: fast recovery for {} — similarity {:.0%}, falling back".format(aid_name, sim))
 
-        # Slow path: full replay (or macro replay if monkey-patched)
-        for attempt in range(2):
-            replay_response = self.aid_scan_replay()
-            if replay_response:
-                self.client.send(replay_response)
-                sim = self.screen_similarity(replay_response, self.aid_scan_ref_screen)
-                if sim > 0.8:
-                    return True
-                self.logger.debug("AID scan: replay attempt {} for {} — similarity {:.0%}".format(
-                    attempt + 1, aid_name, sim))
-            else:
-                self.logger.debug("AID scan: replay attempt {} for {} — no response".format(
-                    attempt + 1, aid_name))
+        # Slow path: full replay (or macro replay if monkey-patched) — 1 attempt
+        replay_response = self.aid_scan_replay()
+        if replay_response:
+            self.client.send(replay_response)
+            sim = self.screen_similarity(replay_response, self.aid_scan_ref_screen)
+            if sim > 0.8:
+                return True
+            self.logger.debug("AID scan: replay for {} — similarity {:.0%}".format(aid_name, sim))
+        else:
+            self.logger.debug("AID scan: replay for {} — no response".format(aid_name))
         return False
 
     def write_aid_scan_log(self, result):
