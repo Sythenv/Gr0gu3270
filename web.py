@@ -453,6 +453,14 @@ class Gr0gu3270State:
                 col = int(step['col']) if step.get('col') is not None else None
                 pending_fields.append((step['text'], row, col))
             else:
+                # Auto-resolve: SEND with text but no position → use server cursor
+                if (action == 'SEND' and step.get('text')
+                        and step.get('row') is None and not pending_fields):
+                    with self.lock:
+                        cr, cc = self.h.cursor_row, self.h.cursor_col
+                    pending_fields = [(step['text'], cr, cc)]
+                    step = dict(step)
+                    del step['text']
                 if pending_fields:
                     pending_fields = self._resolve_field_positions(pending_fields)
                 with self.lock:
