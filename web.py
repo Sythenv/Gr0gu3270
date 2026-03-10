@@ -2601,7 +2601,7 @@ async function openAidScanPopup() {
   const ALL_AID_KEYS = ['PF2','PF4','PF5','PF6','PF7','PF8','PF9','PF10','PF11','PF12','PF13','PF14','PF15','PF16','PF17','PF18','PF19','PF20','PF21','PF22','PF23','PF24'];
   const DEFAULT_OFF = new Set(['PF16']);
   const keyChecks = ALL_AID_KEYS.map(k => '<label style="display:inline-flex;align-items:center;gap:2px;font-size:13px;color:var(--dim)"><input type="checkbox" class="aid-key-cb" value="'+k+'" '+(DEFAULT_OFF.has(k)?'':'checked')+'> '+k+'</label>').join(' ');
-  overlay.innerHTML = `<div class="fuzz-popup" style="width:80vw">
+  overlay.innerHTML = `<div class="fuzz-popup" style="width:80vw;max-height:90vh;display:flex;flex-direction:column;">
     <h3>AID Scan</h3>
     <div style="margin:0 0 8px 0;line-height:1.8">${keyChecks}</div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
@@ -2624,9 +2624,9 @@ async function openAidScanPopup() {
       <span style="color:var(--dim)"><b id="as-unmapped">0</b> UNMAPPED</span>
       <span style="color:var(--dim)"><b id="as-skipped">0</b> SKIP</span>
     </div>
-    <div style="max-height:400px;overflow-y:auto;">
-      <table style="table-layout:fixed;width:100%"><thead><tr>
-        <th style="width:70px">Key</th><th style="width:100px">Category</th><th style="width:50px">Sim</th><th>Preview</th>
+    <div style="overflow-y:auto;flex:1;min-height:0;">
+      <table style="width:100%"><thead><tr>
+        <th style="width:60px">Key</th><th style="width:120px">Category</th><th style="width:50px">Sim</th><th style="width:40px">R</th><th>Preview</th>
       </tr></thead><tbody id="aid-scan-table"></tbody></table>
     </div>
   </div>`;
@@ -2692,9 +2692,12 @@ async function aidScanPoll() {
       const tr = document.createElement('tr');
       tr.style.cursor = 'pointer';
       tr.ondblclick = () => { post('/api/inject/keys', {keys:[row.aid_key]}); toast('Sent '+row.aid_key, 'success'); };
+      const replayDot = row.replay_ok===true ? '\u25cf' : row.replay_ok===false ? '\u25cf' : '';
+      const replayColor = row.replay_ok===true ? 'var(--text)' : 'var(--alert)';
       tr.innerHTML = '<td>'+row.aid_key+'</td>'+
-        '<td style="color:'+c+';font-weight:bold">'+row.category+'</td>'+
+        '<td style="color:'+c+';font-weight:bold;white-space:nowrap">'+row.category+'</td>'+
         '<td style="text-align:center;color:'+simColor+'">'+(sim!==''?sim+'%':'')+'</td>'+
+        '<td style="text-align:center;color:'+replayColor+'">'+replayDot+'</td>'+
         '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-size:14px">'+preview+'</td>';
       tb.appendChild(tr);
     });
