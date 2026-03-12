@@ -372,6 +372,38 @@ class Gr0gu3270State:
                 sources.append(fname)
         return lines, sources
 
+    def _load_wordlists(self, filenames):
+        """Load specific wordlist files by name. Returns (lines, sources) like _select_wordlists."""
+        inj_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'injections')
+        lines = []
+        sources = []
+        for fname in filenames:
+            fpath = os.path.join(inj_dir, fname)
+            if os.path.isfile(fpath):
+                with open(fpath, 'r') as f:
+                    file_lines = [l.rstrip() for l in f if l.strip() and not l.startswith('#')]
+                for l in file_lines:
+                    lines.append((l, fname))
+                sources.append(fname)
+        return lines, sources
+
+    def _auto_wordlist_order(self, field):
+        """Return the auto-selected wordlist filenames for a field (without loading)."""
+        is_hidden = field.get('hidden', False)
+        is_numeric = field.get('numeric', False)
+        is_short = field.get('length', 0) <= 8
+        if is_short:
+            if is_numeric:
+                return ['short-numeric.txt', 'short-alpha.txt']
+            else:
+                return ['short-alpha.txt', 'short-numeric.txt']
+        elif is_hidden:
+            return ['hidden-tampering.txt', 'boundary-values.txt', 'cobol-overflow.txt']
+        elif is_numeric:
+            return ['boundary-values.txt', 'cobol-overflow.txt']
+        else:
+            return ['boundary-values.txt', 'cobol-overflow.txt', 'db2-injections.txt']
+
     def fuzz_go(self, data):
         if self.inject_running:
             return {'ok': False, 'message': 'Injection already running.'}
@@ -380,7 +412,12 @@ class Gr0gu3270State:
         if not field:
             return {'ok': False, 'message': 'No field specified.'}
 
-        lines, sources = self._select_wordlists(field)
+        # Use explicit wordlist selection if provided, otherwise auto-select
+        selected = data.get('wordlists')
+        if selected and isinstance(selected, list) and len(selected) > 0:
+            lines, sources = self._load_wordlists(selected)
+        else:
+            lines, sources = self._select_wordlists(field)
         if not lines:
             return {'ok': False, 'message': 'No wordlist files found.'}
 
@@ -3068,10 +3105,32 @@ async function openFuzzPopup(field) {
   if (document.getElementById('fuzz-overlay')) return; // already open
   fuzzField = field;
   const type = field.hidden ? 'Hidden' : field.numeric ? 'Numeric' : 'Input';
-  // Load macro list for dropdown
-  const macroList = await api('/api/macro/list').catch(()=>({files:[]}));
+  // Load macro list and wordlist list in parallel
+  const [macroList, wlFiles] = await Promise.all([
+    api('/api/macro/list').catch(()=>({files:[]})),
+    api('/api/injection_files').catch(()=>[])
+  ]);
   let macroOpts = '<option value="">No replay macro</option>';
   (macroList.files||[]).forEach(f => { macroOpts += '<option value="'+esc(f)+'">'+esc(f.replace('.json',''))+'</option>'; });
+  // Auto-select wordlists based on field type (mirror backend _auto_wordlist_order)
+  const isShort = (field.length||0) <= 8;
+  let autoWl;
+  if (isShort) {
+    autoWl = field.numeric ? ['short-numeric.txt','short-alpha.txt'] : ['short-alpha.txt','short-numeric.txt'];
+  } else if (field.hidden) {
+    autoWl = ['hidden-tampering.txt','boundary-values.txt','cobol-overflow.txt'];
+  } else if (field.numeric) {
+    autoWl = ['boundary-values.txt','cobol-overflow.txt'];
+  } else {
+    autoWl = ['boundary-values.txt','cobol-overflow.txt','db2-injections.txt'];
+  }
+  const allWl = Array.isArray(wlFiles) ? wlFiles : [];
+  let wlHtml = '';
+  allWl.forEach(f => {
+    const checked = autoWl.includes(f) ? ' checked' : '';
+    const label = f.replace('.txt','');
+    wlHtml += '<label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;color:var(--text);font-size:13px;cursor:pointer"><input type="checkbox" class="fp-wl-cb" value="'+esc(f)+'"'+checked+'>'+esc(label)+'</label>';
+  });
   const overlay = document.createElement('div');
   overlay.id = 'fuzz-overlay';
   overlay.className = 'fuzz-overlay';
@@ -3084,6 +3143,10 @@ async function openFuzzPopup(field) {
       <button class="btn danger" id="fp-stop" onclick="fuzzPopupStop()" style="display:none">STOP</button>
       <input type="number" id="fp-timeout" value="1" min="0.5" max="10" step="0.5" style="width:70px;background:var(--input-bg);color:var(--text);border:1px solid var(--border);padding:4px 8px;font-family:inherit;font-size:17px;margin-left:12px"> <label style="color:var(--dim);font-size:15px">s timeout</label>
       <button class="btn" onclick="closeFuzzPopup()" style="margin-left:auto">\u2715</button>
+    </div>
+    <div style="margin-bottom:8px">
+      <label style="color:var(--dim);font-size:13px">Wordlists:</label>
+      <div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:2px 0">${wlHtml}</div>
     </div>
     <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
       <label style="color:var(--dim);font-size:13px">Replay macro:</label>
@@ -3113,10 +3176,12 @@ async function fuzzPopupStart() {
   const key = 'ENTER';
   const t = parseFloat(document.getElementById('fp-timeout').value) || 1;
   const macro = document.getElementById('fp-macro').value || '';
+  const wlChecked = [...document.querySelectorAll('.fp-wl-cb:checked')].map(cb => cb.value);
+  if (wlChecked.length === 0) { toast('Select at least one wordlist', 'error'); return; }
   const r = await post('/api/inject/fuzz', {
     field: {row: fuzzField.row, col: fuzzField.col, length: fuzzField.length,
             hidden: !!fuzzField.hidden, numeric: !!fuzzField.numeric},
-    key: key, timeout: t, macro: macro
+    key: key, timeout: t, macro: macro, wordlists: wlChecked
   });
   if (!r.ok) { toast(r.message, 'error'); return; }
   document.getElementById('fp-status').textContent = r.message;
